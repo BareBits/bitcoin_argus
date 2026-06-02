@@ -99,7 +99,7 @@ generated as defense-in-depth.
 
 - [x] Phase 1 — config + validation + port allocator + regtest chain & miner
 - [x] Phase 2 — standalone LND (bitcoind-backed, auto-init wallet)
-- [ ] Phase 3 — Fulcrum (Electrum + mempool backend)
+- [x] Phase 3 — Fulcrum (Electrum server; one+ per network)
 - [ ] Phase 4 — shared Caddy + Cashu
 - [ ] Phase 5 — mempool explorer
 - [ ] Phase 6 — Bitcart (own LND, behind Caddy)
