@@ -11,6 +11,7 @@ from .builders import REGISTRY
 from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
 from .context import BuildContext, Fragment
+from .firewall import generate_firewall
 from .ports import allocate
 from .secrets import load_or_create
 from .shared import generate_shared
@@ -122,5 +123,8 @@ def generate(
     shared_dir = generate_shared(cfg, port_map, output_dir)
     if shared_dir is not None:
         dirs.append(shared_dir)
+
+    # Firewall script opens the public ports across all enabled networks.
+    generate_firewall(cfg, port_map, Path(output_dir))
 
     return dirs
