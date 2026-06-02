@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest  # has docker + compose, so the compose-config test runs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test]"
+      - name: Unit tests
+        run: pytest -q
+      - name: Smoke-test the default config
+        run: |
+          python -m argus validate
+          python -m argus generate

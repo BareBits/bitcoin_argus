@@ -81,6 +81,21 @@ multi-instance, `REVERSEPROXY=none`, the per-net ports, and attaches its Neutrin
 > (`deploy_bitcart_liquidity_lnd`); and the public service ports must be open in
 > the firewall (see below) — the store/admin SSR also fetches the public API URL.
 
+## Testing
+
+```bash
+pip install -e ".[test]"
+pytest
+```
+
+Unit tests cover the deterministic core — config validation, port allocation,
+and the full generation step (compose, `bitcoin.conf`/`lnd.conf`, Cashu/mempool
+env, Caddyfile, firewall, Bitcart env) — and run in CI on every push/PR. A
+Docker-gated test additionally validates the generated compose with
+`docker compose config` when Docker is present. Runtime behaviour that needs real
+chains/daemons (sync, Lightning, ACME, Bitcart's installer) is verified by
+deploying to a host, not in unit tests.
+
 ## Configuration
 
 `config.yaml` has a `global` block (shared hostname, SSL switch, ACME email,
