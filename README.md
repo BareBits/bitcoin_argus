@@ -104,8 +104,9 @@ generated as defense-in-depth.
 - **signet** — default public signet; explorer off by default (use
   mempool.space/signet).
 - **testnet3 / testnet4** — explorers off by default (mempool.space hosts them).
-- **mutinynet** — custom 30s-block signet; requires **Bitcoin Knots**; explorer
-  on by default.
+- **mutinynet** — custom 30s-block signet; explorer on by default. Requires
+  `global.bitcoind_knots_image` (a `signetblocktime`-capable bitcoind — no public
+  image exists, so build one from MutinyWallet/mutiny-net or Bitcoin Knots).
 - **custom-signet** — you must supply `signet_challenge`; mining is a later phase.
 
 ## Roadmap
@@ -116,5 +117,5 @@ generated as defense-in-depth.
 - [x] Phase 4 — shared Caddy (host-level TLS) + Cashu mint
 - [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom-signet/mutinynet)
 - [x] Phase 6 — Bitcart (BareBits installer, own Neutrino LND → our bitcoind, behind Caddy)
-- [ ] Phase 7 — all networks (signet, testnet3/4, mutinynet, custom-signet)
+- [x] Phase 7 — all networks (testnet3/4, mutinynet, custom-signet) wired + validated
 - [ ] Phase 8 — SSL hardening, firewall script, docs

@@ -11,7 +11,9 @@ global:
   acme_email: ops@example.com     # required when ssl_enabled and a public SSL service exists
   # Container images (verify the tags exist for your arch before deploying):
   # bitcoind_image: lncm/bitcoind:v28.0
-  # bitcoind_knots_image: bitcoinknots/bitcoind:28.1.knots20250903
+  # REQUIRED for mutinynet — a signetblocktime-capable bitcoind. No public
+  # image exists; build one from MutinyWallet/mutiny-net or Bitcoin Knots:
+  # bitcoind_knots_image: your-registry/bitcoind-signetblocktime:latest
 
 networks:
   # --- enabled by default ---------------------------------------------------
@@ -45,8 +47,9 @@ networks:
     enabled: false                # mempool.space hosts a public testnet4 explorer
 
   mutinynet:
-    enabled: false                # custom signet, 30s blocks — needs Bitcoin Knots
+    enabled: false                # custom signet, 30s blocks
     # signet_challenge + seed node are built in; mempool defaults on.
+    # Requires global.bitcoind_knots_image (signetblocktime-capable bitcoind).
 
   custom-signet:
     enabled: false
