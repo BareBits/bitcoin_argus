@@ -20,6 +20,7 @@ import yaml
 
 from .config import ArgusConfig
 from .constants import NETWORK_SPECS
+from .resources import global_log
 
 
 @dataclass(frozen=True)
@@ -129,8 +130,12 @@ def generate_shared(
 
     out_dir = output_dir / "shared"
     out_dir.mkdir(parents=True, exist_ok=True)
+    compose = _compose()
+    rotation, log_block = global_log(cfg)
+    if rotation:
+        compose["services"]["caddy"].setdefault("logging", log_block)
     (out_dir / "docker-compose.yml").write_text(
-        yaml.safe_dump(_compose(), sort_keys=False, default_flow_style=False)
+        yaml.safe_dump(compose, sort_keys=False, default_flow_style=False)
     )
     (out_dir / "Caddyfile").write_text(render_caddyfile(cfg, port_map))
     (out_dir / ".env").write_text(f"CADDY_IMAGE={cfg.global_.caddy_image}\n")

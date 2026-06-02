@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import ArgusConfig, NetworkCfg
 from .constants import NetworkSpec
+from .resources import ResolvedResources
 
 
 @dataclass
@@ -28,6 +29,7 @@ class BuildContext:
     secrets: dict[str, str]
     out_dir: Path  # generated/<net_key>; builders may write aux files here
     project: str  # docker compose project name, e.g. "argus-regtest"
+    resources: ResolvedResources  # effective disk/RAM settings for this network
 
     @property
     def network_name(self) -> str:

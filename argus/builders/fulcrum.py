@@ -28,6 +28,9 @@ def _render_conf(ctx: BuildContext) -> str:
         # SSL (fp['ssl']) is enabled once the shared cert layer exists.
         "peering = false",
         "announce = false",
+        # Resource tuning (profile/overrides resolved in argus.resources).
+        f"db_mem = {ctx.resources.fulcrum_db_mem}",
+        f"db_max_open_files = {ctx.resources.fulcrum_db_max_open_files}",
     ]
     return "\n".join(lines) + "\n"
 
