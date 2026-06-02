@@ -52,7 +52,19 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                     ssl=cfg.global_.ssl_enabled and net.mempool.ssl,
                 )
             )
-        # Phase 6 adds bitcart sites here.
+        if net.bitcart.enabled:
+            for pub, back in (
+                ("bitcart_store_public", "bitcart_store"),
+                ("bitcart_admin_public", "bitcart_admin"),
+                ("bitcart_api_public", "bitcart_api"),
+            ):
+                sites.append(
+                    _HttpSite(
+                        public_port=ports[pub],
+                        backend_port=ports[back],
+                        ssl=cfg.global_.ssl_enabled and net.bitcart.ssl,
+                    )
+                )
     return sites
 
 

@@ -70,6 +70,10 @@ def _render_conf(ctx: BuildContext) -> str:
         f"zmqpubrawblock=tcp://0.0.0.0:{ZMQ_BLOCK_INTERNAL}",
         f"zmqpubrawtx=tcp://0.0.0.0:{ZMQ_TX_INTERNAL}",
     ]
+    if net.bitcart.enabled:
+        # BIP157 compact block filters so Bitcart's Neutrino LND can sync
+        # against this node (works on every network, regtest included).
+        lines += ["blockfilterindex=1", "peerblockfilters=1"]
     if chain in _FALLBACKFEE_CHAINS:
         lines.append("fallbackfee=0.00001")
     if challenge:

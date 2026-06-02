@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from .bitcart import generate_bitcart
 from .builders import REGISTRY
 from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
@@ -83,6 +84,10 @@ def generate_network(
         yaml.safe_dump(compose, sort_keys=False, default_flow_style=False)
     )
     _write_env(out_dir / ".env", env)
+
+    # Bitcart is deployed by the BareBits installer, not our compose project,
+    # so it is generated as a separate env + wrapper alongside the stack.
+    generate_bitcart(cfg, net_key, ports, secret_values, output_dir)
     return out_dir
 
 
