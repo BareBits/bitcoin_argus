@@ -1,0 +1,57 @@
+# Bitcoin Argus — deployment configuration.
+#
+# One hostname is shared by every network; services are reached on different
+# ports. Each network gets a 1000-port block (regtest=30000, testnet3=31000,
+# testnet4=32000, signet=33000, mutinynet=34000, custom-signet=35000). Run
+# `argus ports` to see the full allocation, and `argus validate` to check it.
+
+global:
+  hostname: myfaucet.com          # shared by ALL networks (services differ by port)
+  ssl_enabled: true               # master switch — set false for local/test runs
+  acme_email: ops@example.com     # required when ssl_enabled and a public SSL service exists
+  # Container images (verify the tags exist for your arch before deploying):
+  # bitcoind_image: lncm/bitcoind:v28.0
+  # bitcoind_knots_image: bitcoinknots/bitcoind:28.1.knots20250903
+
+networks:
+  # --- enabled by default ---------------------------------------------------
+  regtest:
+    enabled: true
+    miner:
+      enabled: true
+      block_interval_seconds: 60  # one new block per minute
+      initial_blocks: 101         # coinbase maturity before steady state
+    mempool:
+      enabled: true               # no public explorer exists for regtest
+
+  signet:
+    enabled: true                 # default public signet (no challenge needed)
+    mempool:
+      enabled: false              # mempool.space hosts a public signet explorer
+
+  # --- scaffolded but disabled (flip `enabled: true` to use) ----------------
+  testnet3:
+    enabled: false                # mempool.space hosts a public testnet3 explorer
+
+  testnet4:
+    enabled: false                # mempool.space hosts a public testnet4 explorer
+
+  mutinynet:
+    enabled: false                # custom signet, 30s blocks — needs Bitcoin Knots
+    # signet_challenge + seed node are built in; mempool defaults on.
+
+  custom-signet:
+    enabled: false
+    signet_challenge: ""          # REQUIRED when enabled (even-length hex)
+    # mempool defaults on; automated mining is not implemented yet — set
+    # miner.enabled: false until the signet miner lands.
+
+# Per-network options available (all optional; sane defaults applied):
+#   prune: <MiB>                  # rejected if an indexer/mempool is enabled
+#   bitcoind: { extra_args: [...] }
+#   lnd:      { extra_args: [...], extra_env: {...} }
+#   cashu:    { enabled, ssl, extra_env: {...} }
+#   bitcart:  { enabled, ssl, extra_env: {...}, ports: { store, admin, api, daemon } }
+#   indexers: [ { name, enabled, ssl } ]    # one Fulcrum per entry
+#   mempool:  { enabled, ssl }
+#   ports:    { <port_name>: <number> }     # override any allocated port
