@@ -35,6 +35,10 @@ def build_mempool(ctx: BuildContext) -> Fragment:
         "image": "${MARIADB_IMAGE}",
         "container_name": f"{ctx.project}-mempool-db",
         "restart": "unless-stopped",
+        # Cap InnoDB's RAM use (resource profile/override).
+        "command": [
+            f"--innodb-buffer-pool-size={ctx.resources.mempool_mariadb_buffer_mb}M"
+        ],
         "environment": {
             "MYSQL_DATABASE": "mempool",
             "MYSQL_USER": "mempool",
@@ -65,7 +69,8 @@ def build_mempool(ctx: BuildContext) -> Fragment:
         "DATABASE_DATABASE": "mempool",
         "DATABASE_USERNAME": "mempool",
         "DATABASE_PASSWORD": "${MEMPOOL_DB_PASSWORD}",
-        "STATISTICS_ENABLED": "true",
+        # Historical fee/mempool stats are the biggest DB grower — off by default.
+        "STATISTICS_ENABLED": "true" if ctx.net.mempool.statistics else "false",
         **electrum_env,
     }
 

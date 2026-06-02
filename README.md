@@ -114,6 +114,20 @@ service port — so it needs a real DNS name pointing at the host and ports
 serves plain HTTP and runs no ACME. (Fulcrum's Electrum-TLS port is a documented
 follow-up; the plaintext Electrum port works today.)
 
+### Resources (disk/RAM)
+
+A `resources` block (global and per-network; per-network wins) tunes footprint.
+A `profile` (`low` / `medium` (default) / `high`) sets baseline values for
+`bitcoind_dbcache`, `bitcoind_maxmempool`, `fulcrum_db_mem`,
+`fulcrum_db_max_open_files`, and `mempool_mariadb_buffer_mb`; any of those can be
+overridden explicitly (explicit > profile). Three things are on by default
+(each toggleable): **Docker log rotation** (`log_rotation`, on every
+Argus-generated service — not Bitcart's installer-managed containers), **LND**
+disk hygiene (`lnd.auto_compact` → bbolt auto-compact + canceled-invoice GC), and
+**mempool statistics off** (`mempool.statistics: false` — the biggest MariaDB
+grower). Note: bitcoind `prune`/`txindex` can't be reduced while Fulcrum is
+enabled (Fulcrum requires `txindex` + an un-pruned node).
+
 ## Ports & firewall
 
 Each network owns a 1000-port block; `argus ports` prints the assignment.

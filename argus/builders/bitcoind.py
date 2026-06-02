@@ -54,6 +54,9 @@ def _render_conf(ctx: BuildContext) -> str:
     lines += [
         f"rpcuser={ctx.secrets['RPC_USER']}",
         f"rpcpassword={ctx.secrets['RPC_PASSWORD']}",
+        # Resource tuning (profile/overrides resolved in argus.resources).
+        f"dbcache={ctx.resources.bitcoind_dbcache}",
+        f"maxmempool={ctx.resources.bitcoind_maxmempool}",
     ]
     for arg in net.bitcoind.extra_args:
         lines.append(_sanitize_conf_arg(arg))

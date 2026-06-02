@@ -118,6 +118,41 @@ def test_bitcart_env(tmp_path):
     assert env["LIQUIDITYHELPER_LIQUIDITY_DISABLED"] == "False"
 
 
+def test_resource_knobs_in_confs(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    bconf = _read(out / "regtest" / "bitcoin" / "bitcoin.conf")
+    assert "dbcache=300" in bconf and "maxmempool=100" in bconf  # medium profile
+    fconf = _read(out / "regtest" / "fulcrum-1" / "fulcrum.conf")
+    assert "db_mem = 600" in fconf and "db_max_open_files = 200" in fconf
+    assert "db.bolt.auto-compact=true" in _read(out / "regtest" / "lnd" / "lnd.conf")
+
+
+def test_lnd_hygiene_toggle_off(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF, "lnd": {"auto_compact": False}}}))
+    assert "auto-compact" not in _read(out / "regtest" / "lnd" / "lnd.conf")
+
+
+def test_mempool_statistics_off_and_buffer(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    d = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    assert d["services"]["mempool-api"]["environment"]["STATISTICS_ENABLED"] == "false"
+    assert "--innodb-buffer-pool-size=128M" in d["services"]["mempool-db"]["command"]
+
+
+def test_log_rotation_default_on(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    d = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    assert d["services"]["bitcoind"]["logging"]["options"]["max-size"] == "10m"
+
+
+def test_log_rotation_off(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF, "resources": {"log_rotation": False}}}))
+    d = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    assert "logging" not in d["services"]["bitcoind"]
+
+
 def test_secrets_are_idempotent(tmp_path):
     data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
     cfgp = tmp_path / "config.yaml"

@@ -137,6 +137,41 @@ PORT_OFFSETS: dict[str, int] = {
     "mempool_db": 311,  # reserved; DB is internal-only (not published)
 }
 
+# --- Resource profiles ------------------------------------------------------
+
+# Tunable numeric knobs and their value per profile. The resolver applies these
+# as the baseline, overridable by explicit per-knob settings (see argus.resources).
+DEFAULT_RESOURCE_PROFILE = "medium"
+RESOURCE_PROFILES: dict[str, dict[str, int]] = {
+    "low": {
+        "bitcoind_dbcache": 100,
+        "bitcoind_maxmempool": 50,
+        "fulcrum_db_mem": 400,
+        "fulcrum_db_max_open_files": 100,
+        "mempool_mariadb_buffer_mb": 64,
+    },
+    "medium": {
+        "bitcoind_dbcache": 300,
+        "bitcoind_maxmempool": 100,
+        "fulcrum_db_mem": 600,
+        "fulcrum_db_max_open_files": 200,
+        "mempool_mariadb_buffer_mb": 128,
+    },
+    "high": {
+        "bitcoind_dbcache": 1000,
+        "bitcoind_maxmempool": 300,
+        "fulcrum_db_mem": 2048,
+        "fulcrum_db_max_open_files": 1000,
+        "mempool_mariadb_buffer_mb": 512,
+    },
+}
+RESOURCE_KNOBS = tuple(RESOURCE_PROFILES["medium"].keys())
+
+# Default Docker json-file log rotation (caps unbounded log disk growth).
+DEFAULT_LOG_MAX_SIZE = "10m"
+DEFAULT_LOG_MAX_FILE = 3
+
+
 # mempool has no "regtest" network, so we run it in mainnet mode against the
 # regtest node (data is correct; the UI label is cosmetic). Others map directly.
 MEMPOOL_NETWORK_MAP: dict[str, str] = {

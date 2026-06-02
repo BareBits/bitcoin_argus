@@ -14,6 +14,13 @@ global:
   # REQUIRED for mutinynet — a signetblocktime-capable bitcoind. No public
   # image exists; build one from MutinyWallet/mutiny-net or Bitcoin Knots:
   # bitcoind_knots_image: your-registry/bitcoind-signetblocktime:latest
+  resources:                        # disk/RAM tuning (also settable per-network)
+    profile: medium                 # low | medium | high (baseline knob values)
+    log_rotation: true              # cap Docker json-file logs (10m x 3)
+    # Explicit overrides of the profile's values (any subset):
+    # bitcoind_dbcache: 300         # MiB     bitcoind_maxmempool: 100   # MB
+    # fulcrum_db_mem: 600           # MiB     fulcrum_db_max_open_files: 200
+    # mempool_mariadb_buffer_mb: 128
 
 networks:
   # --- enabled by default ---------------------------------------------------
@@ -60,7 +67,7 @@ networks:
 # Per-network options available (all optional; sane defaults applied):
 #   prune: <MiB>                  # rejected if an indexer/mempool is enabled
 #   bitcoind: { extra_args: [...] }
-#   lnd:      { extra_args: [...], extra_env: {...} }
+#   lnd:      { extra_args: [...], extra_env: {...}, auto_compact: true }
 #   cashu:    { enabled, ssl, extra_env: {...} }
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,
@@ -71,5 +78,8 @@ networks:
 #               # bitcart admin password is auto-generated to secrets/<net>/;
 #               # SMTP password: add BITCART_SMTP_PASSWORD to secrets/<net>/secrets.env
 #   indexers: [ { name, enabled, ssl } ]    # one Fulcrum per entry
-#   mempool:  { enabled, ssl }
+#   mempool:  { enabled, ssl, statistics }  # statistics default false (DB grower)
+#   resources: { profile, log_rotation, bitcoind_dbcache, bitcoind_maxmempool,
+#                fulcrum_db_mem, fulcrum_db_max_open_files,
+#                mempool_mariadb_buffer_mb }  # per-network override of global
 #   ports:    { <port_name>: <number> }     # override any allocated port

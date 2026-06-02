@@ -13,6 +13,7 @@ from .constants import NETWORK_SPECS
 from .context import BuildContext, Fragment
 from .firewall import generate_firewall
 from .ports import allocate
+from .resources import log_options, resolve
 from .secrets import load_or_create
 from .shared import generate_shared
 
@@ -61,6 +62,7 @@ def generate_network(
         secrets=secret_values,
         out_dir=out_dir,
         project=project,
+        resources=resolve(cfg, net_key),
     )
 
     compose = _base_compose(project, ctx.network_name)
@@ -80,6 +82,12 @@ def generate_network(
 
     if not compose["volumes"]:
         del compose["volumes"]
+
+    # Cap Docker json-file log growth on every generated service.
+    if ctx.resources.log_rotation:
+        block = log_options(ctx.resources)
+        for svc in compose["services"].values():
+            svc.setdefault("logging", block)
 
     (out_dir / "docker-compose.yml").write_text(
         yaml.safe_dump(compose, sort_keys=False, default_flow_style=False)

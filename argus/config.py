@@ -11,7 +11,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -44,6 +44,25 @@ class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class ResourcesCfg(_Base):
+    """Disk/RAM tuning. A ``profile`` sets a baseline; explicit knobs override it.
+
+    Used at global level and per-network (per-network wins). All fields are
+    optional/None so the resolver can tell "unset" (inherit) from an explicit 0.
+    """
+
+    profile: Literal["low", "medium", "high"] | None = None
+    log_rotation: bool | None = None  # default true; caps Docker json-file logs
+    log_max_size: str | None = None  # default "10m"
+    log_max_file: int | None = Field(default=None, ge=1)
+    # Explicit overrides of the profile's per-knob values:
+    bitcoind_dbcache: int | None = Field(default=None, ge=4)  # MiB
+    bitcoind_maxmempool: int | None = Field(default=None, ge=5)  # MB
+    fulcrum_db_mem: int | None = Field(default=None, ge=1)  # MiB
+    fulcrum_db_max_open_files: int | None = Field(default=None, ge=20)
+    mempool_mariadb_buffer_mb: int | None = Field(default=None, ge=8)  # MB
+
+
 class GlobalConfig(_Base):
     """Settings shared by every network."""
 
@@ -63,6 +82,7 @@ class GlobalConfig(_Base):
     mempool_backend_image: str = "mempool/backend:v3.3.1"
     mempool_frontend_image: str = "mempool/frontend:v3.3.1"
     mariadb_image: str = "mariadb:10.5.21"
+    resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
 
     @field_validator("hostname")
     @classmethod
@@ -79,6 +99,7 @@ class BitcoindCfg(_Base):
 class LndCfg(_Base):
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
+    auto_compact: bool = True  # bbolt auto-compact + canceled-invoice GC (hygiene)
 
 
 class CashuCfg(_Base):
@@ -151,6 +172,7 @@ class MempoolCfg(_Base):
     # None => fall back to the network's default (regtest/custom-signet/mutinynet on).
     enabled: bool | None = None
     ssl: bool = True
+    statistics: bool = False  # historical fee/mempool graphs; biggest DB grower
 
 
 class MinerCfg(_Base):
@@ -174,6 +196,7 @@ class NetworkCfg(_Base):
     indexers: list[IndexerCfg] = Field(default_factory=lambda: [IndexerCfg()])
     mempool: MempoolCfg = Field(default_factory=MempoolCfg)
     miner: MinerCfg = Field(default_factory=MinerCfg)
+    resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
 
     # Optional host-port overrides keyed by the names in constants.PORT_OFFSETS
     # (or "fulcrum_<i>_electrum_tcp" etc.).

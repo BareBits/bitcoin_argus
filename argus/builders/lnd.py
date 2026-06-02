@@ -51,6 +51,16 @@ def _render_conf(ctx: BuildContext) -> str:
         # Make the TLS cert valid for in-container/loopback clients (e.g. Cashu).
         "tlsextradomain=lnd",
         "accept-keysend=true",
+    ]
+    if net.lnd.auto_compact:
+        # Disk hygiene: compact channel.db on startup + drop canceled invoices.
+        lines += [
+            "gc-canceled-invoices-on-startup=true",
+            "gc-canceled-invoices-on-the-fly=true",
+            "db.bolt.auto-compact=true",
+            "db.bolt.auto-compact-min-age=168h0m0s",
+        ]
+    lines += [
         "",
         "[Bitcoin]",
         "bitcoin.active=true",
