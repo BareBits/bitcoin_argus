@@ -12,6 +12,7 @@ from typing import Callable
 
 from ..context import BuildContext, Fragment
 from .bitcoind import build_bitcoind
+from .lnd import build_lnd
 from .miner import build_miner
 
 
@@ -22,10 +23,11 @@ class SubTool:
     include: Callable[[BuildContext], bool]
 
 
-# Phase 1 ships the chain + regtest miner. Later phases append lnd, fulcrum,
-# cashu, bitcart, mempool, and the shared caddy layer.
+# Chain + LND + regtest miner. Later phases append fulcrum, cashu, bitcart,
+# mempool, and the shared caddy layer.
 REGISTRY: list[SubTool] = [
     SubTool("bitcoind", build_bitcoind, lambda c: True),
+    SubTool("lnd", build_lnd, lambda c: True),
     SubTool(
         "miner",
         build_miner,
