@@ -101,7 +101,7 @@ generated as defense-in-depth.
 - [x] Phase 2 — standalone LND (bitcoind-backed, auto-init wallet)
 - [x] Phase 3 — Fulcrum (Electrum server; one+ per network)
 - [x] Phase 4 — shared Caddy (host-level TLS) + Cashu mint
-- [ ] Phase 5 — mempool explorer
+- [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom-signet/mutinynet)
 - [ ] Phase 6 — Bitcart (own LND, behind Caddy)
 - [ ] Phase 7 — all networks (signet, testnet3/4, mutinynet, custom-signet)
 - [ ] Phase 8 — SSL hardening, firewall script, docs

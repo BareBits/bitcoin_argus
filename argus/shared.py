@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from .config import ArgusConfig
+from .constants import NETWORK_SPECS
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,15 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                     ssl=cfg.global_.ssl_enabled and net.cashu.ssl,
                 )
             )
-        # Phase 6/5 add bitcart and mempool sites here.
+        if net.mempool_enabled(NETWORK_SPECS[net_key]):
+            sites.append(
+                _HttpSite(
+                    public_port=ports["mempool_public"],
+                    backend_port=ports["mempool_web"],
+                    ssl=cfg.global_.ssl_enabled and net.mempool.ssl,
+                )
+            )
+        # Phase 6 adds bitcart sites here.
     return sites
 
 

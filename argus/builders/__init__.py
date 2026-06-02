@@ -15,6 +15,7 @@ from .bitcoind import build_bitcoind
 from .cashu import build_cashu
 from .fulcrum import build_fulcrum
 from .lnd import build_lnd
+from .mempool import build_mempool
 from .miner import build_miner
 
 
@@ -32,6 +33,7 @@ REGISTRY: list[SubTool] = [
     SubTool("lnd", build_lnd, lambda c: True),
     SubTool("fulcrum", build_fulcrum, lambda c: bool(c.net.enabled_indexers())),
     SubTool("cashu", build_cashu, lambda c: c.net.cashu.enabled),
+    SubTool("mempool", build_mempool, lambda c: c.net.mempool_enabled(c.spec)),
     SubTool(
         "miner",
         build_miner,

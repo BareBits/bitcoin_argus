@@ -133,8 +133,18 @@ PORT_OFFSETS: dict[str, int] = {
     "bitcart_admin": 211,
     "bitcart_api": 212,
     "bitcart_daemon": 213,
-    "mempool_api": 310,
-    "mempool_db": 311,
+    "mempool_web": 301,  # frontend loopback (Caddy proxies here)
+    "mempool_api": 310,  # backend API loopback (debug)
+    "mempool_db": 311,  # reserved; DB is internal-only (not published)
+}
+
+# mempool has no "regtest" network, so we run it in mainnet mode against the
+# regtest node (data is correct; the UI label is cosmetic). Others map directly.
+MEMPOOL_NETWORK_MAP: dict[str, str] = {
+    "regtest": "mainnet",
+    "test": "testnet",
+    "testnet4": "testnet4",
+    "signet": "signet",
 }
 
 # Fulcrum instances occupy 40 + i*stride within the block.

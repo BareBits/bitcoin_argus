@@ -57,6 +57,9 @@ class GlobalConfig(_Base):
     fulcrum_image: str = "cculianu/fulcrum:v2.1.1"
     cashu_image: str = "cashubtc/nutshell:0.20.1"
     caddy_image: str = "caddy:2"
+    mempool_backend_image: str = "mempool/backend:v3.3.1"
+    mempool_frontend_image: str = "mempool/frontend:v3.3.1"
+    mariadb_image: str = "mariadb:10.5.21"
 
     @field_validator("hostname")
     @classmethod
