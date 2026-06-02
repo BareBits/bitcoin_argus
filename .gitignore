@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Argus output — generated compose projects and secrets (never commit)
+generated/
+secrets/
+
+# Local Claude Code settings (machine-specific permissions)
+.claude/settings.local.json
