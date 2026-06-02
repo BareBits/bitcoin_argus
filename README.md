@@ -5,10 +5,10 @@ single `config.yaml`, Argus generates an isolated Docker Compose project per
 enabled network, each bundling the services a developer needs to build against
 that network.
 
-> **Status: early development (Phase 1).** The config engine, port allocator, and
-> the regtest chain + auto-miner are implemented. LND, Fulcrum, Cashu, Bitcart,
-> mempool, and the shared TLS proxy are being added network-by-network. See
-> [Roadmap](#roadmap).
+> **Status: all phases complete.** The full stack — bitcoind, LND, Fulcrum,
+> Cashu, mempool, Bitcart (with its Neutrino LND), and the shared Caddy/TLS layer
+> plus the firewall script — is implemented and has been deployed and verified on
+> a live test server. See [Roadmap](#roadmap).
 
 ## What it deploys (per enabled network)
 
@@ -57,10 +57,16 @@ python -m argus validate          # check the config
 python -m argus ports             # review the host-port allocation
 python -m argus generate          # render enabled networks into generated/
 
-# 2. Deploy a network (on the server)
-cd generated/regtest
-docker compose up -d
+# 2. Deploy on the server (copy generated/ across, then per network)
+cd generated/regtest && docker compose up -d         # the core stack
+bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
+cd generated/shared && docker compose up -d           # the shared Caddy
+sudo bash generated/firewall.sh                       # open the public ports
 ```
+
+> When the set of Caddy sites/ports changes, **restart the Caddy container**
+> (`docker restart argus-caddy`) — a hot `caddy reload` won't bind new
+> host-mode listeners.
 
 ## Bitcart
 
@@ -86,16 +92,26 @@ level, indexer list, mempool toggle, explicit ports). See the comments in
 ### SSL
 
 SSL defaults **on** per service; the global `ssl_enabled: false` switch turns it
-off everywhere for testing. ACME (Let's Encrypt) uses `:80`; regtest uses
-internal self-signed certs (no public DNS).
+off everywhere (used for local/test runs). With SSL on, the shared Caddy obtains
+**one Let's Encrypt certificate for the hostname** and serves it across every
+service port — so it needs a real DNS name pointing at the host and ports
+**80/443 open** (the generated firewall script opens them). With SSL off, Caddy
+serves plain HTTP and runs no ACME. (Fulcrum's Electrum-TLS port is a documented
+follow-up; the plaintext Electrum port works today.)
 
 ## Ports & firewall
 
 Each network owns a 1000-port block; `argus ports` prints the assignment.
-Public: **LND P2P** and the **Electrum** port. Closed (bound to `127.0.0.1`):
-**bitcoind RPC/ZMQ** and **LND gRPC/REST**. Because Docker bypasses `ufw`, closed
-services are bound to loopback in the publish spec; a firewall script is also
-generated as defense-in-depth.
+**Public:** LND P2P, the Electrum port, and the Caddy HTTP ports (cashu /
+mempool / bitcart), plus Bitcart's btclnd P2P pool. **Closed (bound to
+`127.0.0.1`):** bitcoind RPC/ZMQ, LND gRPC/REST, Fulcrum admin, mempool API/DB,
+and Bitcart's component ports.
+
+`argus generate` writes **`generated/firewall.sh`** — run it on the host to
+`ufw allow` exactly the public ports (it keeps SSH open; closed services need no
+rule since they're loopback-bound). Because Docker publishes ports past `ufw`,
+this script is what makes the public ports reachable once you enforce a
+default-deny incoming policy (`ufw default deny incoming && ufw --force enable`).
 
 ## Per-network notes
 
@@ -118,4 +134,4 @@ generated as defense-in-depth.
 - [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom-signet/mutinynet)
 - [x] Phase 6 — Bitcart (BareBits installer, own Neutrino LND → our bitcoind, behind Caddy)
 - [x] Phase 7 — all networks (testnet3/4, mutinynet, custom-signet) wired + validated
-- [ ] Phase 8 — SSL hardening, firewall script, docs
+- [x] Phase 8 — firewall script, SSL path, deploy docs
