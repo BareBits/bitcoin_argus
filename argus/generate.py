@@ -12,6 +12,7 @@ from .constants import NETWORK_SPECS
 from .context import BuildContext, Fragment
 from .ports import allocate
 from .secrets import load_or_create
+from .shared import generate_shared
 
 
 def _project_name(net_key: str) -> str:
@@ -107,7 +108,14 @@ def generate(
     else:
         targets = [k for k, _ in cfg.enabled_networks()]
 
-    return [
+    dirs = [
         generate_network(cfg, k, port_map[k], output_dir, secrets_dir)
         for k in targets
     ]
+
+    # The shared Caddy layer always reflects the full set of enabled networks.
+    shared_dir = generate_shared(cfg, port_map, output_dir)
+    if shared_dir is not None:
+        dirs.append(shared_dir)
+
+    return dirs
