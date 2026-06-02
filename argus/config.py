@@ -93,9 +93,35 @@ class BitcartPorts(_Base):
     daemon: int | None = None
 
 
+class BitcartLiquidityCfg(_Base):
+    """Liquidity-helper plugin options (LIQUIDITYHELPER_* in the installer)."""
+
+    disabled: bool = False  # LIQUIDITYHELPER_LIQUIDITY_DISABLED (False = on)
+    automatic_channel_creation: bool = True  # …_AUTOMATIC_CHANNEL_CREATION_ENABLED
+    cashout_lightning_address: str | None = None  # CASHOUT_LIGHTNING_ADDRESS (required)
+    log_level: str = "INFO"  # LIQUIDITYHELPER_LOG_LEVEL
+
+
+class BitcartSmtpCfg(_Base):
+    """Installation-wide SMTP (BITCART_SMTP_*); password lives in the secret store."""
+
+    server: str | None = None
+    port: int = 587
+    tls: bool = True  # STARTTLS
+    ssl: bool = False  # implicit SSL/TLS
+    username: str | None = None
+    from_email: str | None = None
+
+
 class BitcartCfg(_Base):
     enabled: bool = True
     ssl: bool = True
+    branch: str = "main"  # BRANCH (main | testing) — BareBits fork channel
+    admin_email: str | None = None  # BITCART_ADMIN_EMAIL (required when enabled)
+    btclnd_debug: bool = False  # BTCLND_DEBUG
+    btclnd_p2p_pool_size: int = Field(default=5, ge=1, le=50)  # LND wallets per inst.
+    liquidity: BitcartLiquidityCfg = Field(default_factory=BitcartLiquidityCfg)
+    smtp: BitcartSmtpCfg = Field(default_factory=BitcartSmtpCfg)
     extra_env: dict[str, str] = Field(default_factory=dict)
     ports: BitcartPorts = Field(default_factory=BitcartPorts)
 
@@ -213,13 +239,18 @@ class ArgusConfig(_Base):
                     f"[{key}] is a custom signet and requires 'signet_challenge'"
                 )
 
-            # prune is incompatible with txindex (needed by Fulcrum/mempool)
-            uses_indexer = bool(net.enabled_indexers()) or net.mempool_enabled(spec)
+            # prune is incompatible with the indexes we enable: txindex (Fulcrum/
+            # mempool) and blockfilterindex (Bitcart's Neutrino LND via BIP157).
+            uses_indexer = (
+                bool(net.enabled_indexers())
+                or net.mempool_enabled(spec)
+                or net.bitcart.enabled
+            )
             if net.prune > 0 and uses_indexer:
                 errors.append(
-                    f"[{key}] prune={net.prune} conflicts with the indexer/mempool "
-                    f"(Bitcoin Core cannot run -prune with -txindex). Disable pruning "
-                    f"or the indexer/mempool for this network."
+                    f"[{key}] prune={net.prune} conflicts with the required indexes "
+                    f"(Bitcoin Core cannot run -prune with -txindex/-blockfilterindex). "
+                    f"Disable pruning, or the indexer/mempool/bitcart, for this network."
                 )
 
             # Where mining isn't supported (testnet3/4, public signet, mutinynet)
@@ -230,6 +261,20 @@ class ArgusConfig(_Base):
                 errors.append(
                     f"[{key}] automated mining is only implemented for regtest so far"
                 )
+
+            # Bitcart requires an admin email; an active liquidity helper needs
+            # a cash-out Lightning address.
+            if net.bitcart.enabled:
+                if not net.bitcart.admin_email:
+                    errors.append(f"[{key}] bitcart.admin_email is required")
+                if (
+                    not net.bitcart.liquidity.disabled
+                    and not net.bitcart.liquidity.cashout_lightning_address
+                ):
+                    errors.append(
+                        f"[{key}] bitcart.liquidity.cashout_lightning_address is "
+                        f"required when liquidity is enabled (liquidity.disabled=false)"
+                    )
 
             # track whether any internet-facing SSL service exists (needs ACME email)
             if key != "regtest":

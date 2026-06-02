@@ -19,7 +19,12 @@ _REQUIRED: dict[str, Callable[[str], str]] = {
     "MINT_PRIVATE_KEY": lambda net: _secrets.token_hex(32),
     "MEMPOOL_DB_PASSWORD": lambda net: _secrets.token_hex(16),
     "MEMPOOL_DB_ROOT_PASSWORD": lambda net: _secrets.token_hex(16),
+    # Bitcart admin password (hex => no quote chars, which the installer forbids).
+    "BITCART_ADMIN_PASSWORD": lambda net: _secrets.token_hex(16),
 }
+
+# Operator-supplied secrets (NOT auto-generated): if present in secrets.env they
+# are used, otherwise the related feature is skipped. e.g. BITCART_SMTP_PASSWORD.
 
 
 def _parse_env(text: str) -> dict[str, str]:

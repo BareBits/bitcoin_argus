@@ -62,6 +62,19 @@ cd generated/regtest
 docker compose up -d
 ```
 
+## Bitcart
+
+Bitcart is deployed by the **BareBits installer** (`deploy_bitcart_liquidity_lnd`),
+not as part of a network's compose project. Argus generates, per enabled
+network, `generated/<net>/bitcart/{bitcart.env, deploy-bitcart.sh}`. Run the
+wrapper on the host to deploy that network's Bitcart (it sets `DEPLOY_NAME` for
+multi-instance, `REVERSEPROXY=none`, the per-net ports, and attaches its Neutrino
+`btclnd` to the network's bitcoind). The shared Caddy fronts store/admin/api.
+
+> Requires the installer's multi-instance `DEPLOY_NAME` mode
+> (`deploy_bitcart_liquidity_lnd`); and the public service ports must be open in
+> the firewall (see below) — the store/admin SSR also fetches the public API URL.
+
 ## Configuration
 
 `config.yaml` has a `global` block (shared hostname, SSL switch, ACME email,
@@ -102,6 +115,6 @@ generated as defense-in-depth.
 - [x] Phase 3 — Fulcrum (Electrum server; one+ per network)
 - [x] Phase 4 — shared Caddy (host-level TLS) + Cashu mint
 - [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom-signet/mutinynet)
-- [ ] Phase 6 — Bitcart (own LND, behind Caddy)
+- [x] Phase 6 — Bitcart (BareBits installer, own Neutrino LND → our bitcoind, behind Caddy)
 - [ ] Phase 7 — all networks (signet, testnet3/4, mutinynet, custom-signet)
 - [ ] Phase 8 — SSL hardening, firewall script, docs

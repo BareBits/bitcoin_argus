@@ -118,9 +118,8 @@ PORT_OFFSETS: dict[str, int] = {
     "lnd_p2p": 10,  # PUBLIC
     "lnd_rest": 11,  # 127.0.0.1
     "lnd_grpc": 12,  # 127.0.0.1 (closed to internet)
-    "bitcart_lnd_p2p": 14,  # PUBLIC (Bitcart's own LND)
-    "bitcart_lnd_rest": 15,
-    "bitcart_lnd_grpc": 16,
+    # Bitcart's btclnd uses contiguous p2p/gRPC pools (see *_OFFSET below),
+    # not single ports.
     # Caddy public listeners for HTTP services:
     "cashu_public": 100,
     "bitcart_store_public": 200,
@@ -146,6 +145,11 @@ MEMPOOL_NETWORK_MAP: dict[str, str] = {
     "testnet4": "testnet4",
     "signet": "signet",
 }
+
+# Bitcart's btclnd uses contiguous port pools (one LND wallet per port) within
+# the network block's expansion area: p2p at base+400.., gRPC at base+450..
+BITCART_BTCLND_P2P_OFFSET = 400
+BITCART_BTCLND_GRPC_OFFSET = 450
 
 # Fulcrum instances occupy 40 + i*stride within the block.
 FULCRUM_BASE = 40

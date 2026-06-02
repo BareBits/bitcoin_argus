@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from .config import ArgusConfig, NetworkCfg
 from .constants import (
+    BITCART_BTCLND_GRPC_OFFSET,
+    BITCART_BTCLND_P2P_OFFSET,
     FULCRUM_BASE,
     FULCRUM_MAX_INSTANCES,
     FULCRUM_STRIDE,
@@ -45,6 +47,13 @@ def _network_ports(net_key: str, net: NetworkCfg) -> dict[str, int]:
         ports[f"fulcrum_{i}_electrum_tcp"] = start
         ports[f"fulcrum_{i}_electrum_ssl"] = start + 1
         ports[f"fulcrum_{i}_admin"] = start + 2
+
+    # Bitcart's btclnd p2p/gRPC pool bases (only when Bitcart is enabled).
+    # The pools occupy dedicated sub-ranges so they never collide
+    # with the fixed offsets above; we register the bases for collision checks.
+    if net.bitcart.enabled:
+        ports["bitcart_btclnd_p2p_base"] = base + BITCART_BTCLND_P2P_OFFSET
+        ports["bitcart_btclnd_grpc_base"] = base + BITCART_BTCLND_GRPC_OFFSET
 
     # Apply explicit Bitcart port overrides (operator-facing convenience).
     bp = net.bitcart.ports

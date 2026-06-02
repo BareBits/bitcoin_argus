@@ -23,11 +23,19 @@ networks:
       initial_blocks: 101         # coinbase maturity before steady state
     mempool:
       enabled: true               # no public explorer exists for regtest
+    bitcart:
+      admin_email: admin@example.com               # set to a real address
+      liquidity:
+        cashout_lightning_address: pay@example.com # required while liquidity on
 
   signet:
     enabled: true                 # default public signet (no challenge needed)
     mempool:
       enabled: false              # mempool.space hosts a public signet explorer
+    bitcart:
+      admin_email: admin@example.com
+      liquidity:
+        cashout_lightning_address: pay@example.com
 
   # --- scaffolded but disabled (flip `enabled: true` to use) ----------------
   testnet3:
@@ -51,7 +59,14 @@ networks:
 #   bitcoind: { extra_args: [...] }
 #   lnd:      { extra_args: [...], extra_env: {...} }
 #   cashu:    { enabled, ssl, extra_env: {...} }
-#   bitcart:  { enabled, ssl, extra_env: {...}, ports: { store, admin, api, daemon } }
+#   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
+#               btclnd_p2p_pool_size,
+#               liquidity: { disabled, automatic_channel_creation,
+#                            cashout_lightning_address, log_level },
+#               smtp: { server, port, tls, ssl, username, from_email },
+#               ports: { store, admin, api, daemon }, extra_env: {...} }
+#               # bitcart admin password is auto-generated to secrets/<net>/;
+#               # SMTP password: add BITCART_SMTP_PASSWORD to secrets/<net>/secrets.env
 #   indexers: [ { name, enabled, ssl } ]    # one Fulcrum per entry
 #   mempool:  { enabled, ssl }
 #   ports:    { <port_name>: <number> }     # override any allocated port
