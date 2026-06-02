@@ -52,7 +52,10 @@ class GlobalConfig(_Base):
     acme_email: str | None = None
     # Container images (verified against the target host at deploy time).
     bitcoind_image: str = "lncm/bitcoind:v28.0"
-    bitcoind_knots_image: str = "bitcoinknots/bitcoind:28.1.knots20250903"
+    # Mutinynet needs a signetblocktime-capable bitcoind; no public image
+    # exists, so the operator must supply one (build from MutinyWallet/mutiny-net
+    # or Bitcoin Knots). Empty unless mutinynet is enabled.
+    bitcoind_knots_image: str = ""
     lnd_image: str = "polarlightning/lnd:0.19.3-beta"
     fulcrum_image: str = "cculianu/fulcrum:v2.1.1"
     cashu_image: str = "cashubtc/nutshell:0.20.1"
@@ -237,6 +240,14 @@ class ArgusConfig(_Base):
             if spec.requires_challenge and not challenge:
                 errors.append(
                     f"[{key}] is a custom signet and requires 'signet_challenge'"
+                )
+
+            # Networks needing 30s-block signet support need a special bitcoind.
+            if spec.needs_knots and not self.global_.bitcoind_knots_image:
+                errors.append(
+                    f"[{key}] needs a signetblocktime-capable bitcoind; set "
+                    f"global.bitcoind_knots_image (no public image exists — build "
+                    f"one from MutinyWallet/mutiny-net or Bitcoin Knots)"
                 )
 
             # prune is incompatible with the indexes we enable: txindex (Fulcrum/
