@@ -89,6 +89,17 @@ CHAIN_INTERNAL_PORTS: dict[str, dict[str, int]] = {
 ZMQ_BLOCK_INTERNAL = 28332
 ZMQ_TX_INTERNAL = 28333
 
+# LND's in-container listen ports (identical across isolated networks).
+LND_INTERNAL_PORTS: dict[str, int] = {"p2p": 9735, "grpc": 10009, "rest": 8080}
+
+# Map each chain to LND's bitcoin.<network> config key.
+LND_NETWORK_KEY: dict[str, str] = {
+    "regtest": "regtest",
+    "test": "testnet",
+    "testnet4": "testnet4",
+    "signet": "signet",
+}
+
 
 # --- Port layout ------------------------------------------------------------
 

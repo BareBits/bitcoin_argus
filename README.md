@@ -98,7 +98,7 @@ generated as defense-in-depth.
 ## Roadmap
 
 - [x] Phase 1 — config + validation + port allocator + regtest chain & miner
-- [ ] Phase 2 — standalone LND
+- [x] Phase 2 — standalone LND (bitcoind-backed, auto-init wallet)
 - [ ] Phase 3 — Fulcrum (Electrum + mempool backend)
 - [ ] Phase 4 — shared Caddy + Cashu
 - [ ] Phase 5 — mempool explorer

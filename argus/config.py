@@ -53,6 +53,7 @@ class GlobalConfig(_Base):
     # Container images (verified against the target host at deploy time).
     bitcoind_image: str = "lncm/bitcoind:v28.0"
     bitcoind_knots_image: str = "bitcoinknots/bitcoind:28.1.knots20250903"
+    lnd_image: str = "polarlightning/lnd:0.19.3-beta"
 
     @field_validator("hostname")
     @classmethod
