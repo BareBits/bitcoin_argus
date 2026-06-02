@@ -17,6 +17,8 @@ _REQUIRED: dict[str, Callable[[str], str]] = {
     "RPC_USER": lambda net: f"argus_{net.replace('-', '_')}",
     "RPC_PASSWORD": lambda net: _secrets.token_hex(32),
     "MINT_PRIVATE_KEY": lambda net: _secrets.token_hex(32),
+    "MEMPOOL_DB_PASSWORD": lambda net: _secrets.token_hex(16),
+    "MEMPOOL_DB_ROOT_PASSWORD": lambda net: _secrets.token_hex(16),
 }
 
 
