@@ -1,14 +1,23 @@
 """Per-network secret generation and persistence.
 
-Secrets (currently the bitcoind RPC credentials) are generated once and stored
-under ``secrets/<net>/`` so that regenerating the compose files does not rotate
-credentials out from under a running stack. This directory is gitignored.
+Secrets are generated once and stored under ``secrets/<net>/`` so that
+regenerating the compose files does not rotate credentials out from under a
+running stack. This directory is gitignored. New required keys are added on
+demand without disturbing existing ones.
 """
 
 from __future__ import annotations
 
 import secrets as _secrets
 from pathlib import Path
+from typing import Callable
+
+# name -> generator(net_key). token_hex(32) yields 64 shell-safe hex chars.
+_REQUIRED: dict[str, Callable[[str], str]] = {
+    "RPC_USER": lambda net: f"argus_{net.replace('-', '_')}",
+    "RPC_PASSWORD": lambda net: _secrets.token_hex(32),
+    "MINT_PRIVATE_KEY": lambda net: _secrets.token_hex(32),
+}
 
 
 def _parse_env(text: str) -> dict[str, str]:
@@ -23,22 +32,22 @@ def _parse_env(text: str) -> dict[str, str]:
 
 
 def load_or_create(net_key: str, secrets_root: Path) -> dict[str, str]:
-    """Return this network's secrets, creating + persisting them on first use."""
+    """Return this network's secrets, creating/persisting any missing keys."""
     net_dir = secrets_root / net_key
     env_path = net_dir / "secrets.env"
 
-    if env_path.is_file():
-        existing = _parse_env(env_path.read_text())
-        if "RPC_USER" in existing and "RPC_PASSWORD" in existing:
-            return existing
+    values = _parse_env(env_path.read_text()) if env_path.is_file() else {}
 
-    values = {
-        "RPC_USER": f"argus_{net_key.replace('-', '_')}",
-        # token_hex(32) => 64 hex chars; no shell-special characters.
-        "RPC_PASSWORD": _secrets.token_hex(32),
-    }
-    net_dir.mkdir(parents=True, exist_ok=True)
-    body = "".join(f"{k}={v}\n" for k, v in values.items())
-    env_path.write_text(body)
-    env_path.chmod(0o600)
+    changed = False
+    for key, gen in _REQUIRED.items():
+        if not values.get(key):
+            values[key] = gen(net_key)
+            changed = True
+
+    if changed:
+        net_dir.mkdir(parents=True, exist_ok=True)
+        body = "".join(f"{k}={v}\n" for k, v in sorted(values.items()))
+        env_path.write_text(body)
+        env_path.chmod(0o600)
+
     return values

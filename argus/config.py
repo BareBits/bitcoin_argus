@@ -55,6 +55,8 @@ class GlobalConfig(_Base):
     bitcoind_knots_image: str = "bitcoinknots/bitcoind:28.1.knots20250903"
     lnd_image: str = "polarlightning/lnd:0.19.3-beta"
     fulcrum_image: str = "cculianu/fulcrum:v2.1.1"
+    cashu_image: str = "cashubtc/nutshell:0.20.1"
+    caddy_image: str = "caddy:2"
 
     @field_validator("hostname")
     @classmethod
