@@ -53,6 +53,9 @@ def test_web_port_range_rejected():
         ("argus-regtest-bitcoind", ("regtest", "bitcoind")),
         ("argus-regtest-miner", ("regtest", "miner")),
         ("argus-signet-lnd", ("signet", "lnd")),
+        ("argus-regtest-lnd2", ("regtest", "lnd2")),  # second node, own bucket
+        ("argus-regtest-lnd2-nodeinfo", ("regtest", "lnd2")),
+        ("argus-regtest-lnd-setup", ("regtest", "lnd")),  # funding sidecar
         ("argus-signet-fulcrum-1", ("signet", "fulcrum")),
         ("argus-regtest-mempool-db", ("regtest", "mempool")),
         ("argus-regtest-mempool-web", ("regtest", "mempool")),
@@ -207,6 +210,49 @@ def test_lnd_pubkey_uri_and_mempool_link():
     # The connection URI (pubkey@host:p2p) is offered in the attach section.
     uri_cmd = next(a for a in section.attach if "lncli connect" in a.command)
     assert f"{pk}@{cfg.global_.hostname}:{port_map['regtest']['lnd_p2p']}" in uri_cmd.command
+
+
+def test_second_lnd_node_rows_and_uris():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    port_map = allocate(cfg)
+    pk1, pk2 = "02" + "ab" * 32, "03" + "cd" * 32
+    metrics = {"usage": {}, "host": {}, "lnd": {"regtest": pk1}, "lnd2": {"regtest": pk2}}
+    section = next(s for s in build_sections(cfg, port_map, metrics) if s.key == "regtest")
+
+    # Two LND rows, one per node, on distinct usage buckets.
+    buckets = [s.bucket for s in section.services]
+    assert "lnd" in buckets and "lnd2" in buckets
+    node2 = next(s for s in section.services if s.bucket == "lnd2")
+    assert any(p.label == "P2P" and p.port == port_map["regtest"]["lnd2_p2p"]
+               for p in node2.ports)
+
+    # Both connect URIs are offered, argus1 first.
+    connects = [a for a in section.attach if "lncli connect" in a.command]
+    assert any(pk1 in a.command for a in connects)
+    assert any(pk2 in a.command for a in connects)
+    assert pk1 in connects[0].command  # argus1 at the top
+
+
+def test_regtest_mining_recipe_present_and_gated():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    port_map = allocate(cfg)
+    section = next(
+        s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    mine = next(a for a in section.attach if "generatetoaddress" in a.command)
+    assert mine.audience == "visitor"
+    assert f":{port_map['regtest']['bitcoind_p2p']}" in mine.command
+    assert "mine only the blocks you need" in mine.note.lower()
+
+    # With the P2P port loopback-only, the mining recipe is withheld.
+    cfg2 = validated(make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF, "bitcoind": {"p2p_public": False}}}))
+    section2 = next(
+        s for s in build_sections(cfg2, allocate(cfg2), {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    assert not any("generatetoaddress" in a.command for a in section2.attach)
 
 
 def test_no_lnd_link_or_uri_without_pubkey():

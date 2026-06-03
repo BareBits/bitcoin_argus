@@ -15,14 +15,38 @@ never reaches here.
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 
-from ..constants import CHAIN_INTERNAL_PORTS
+from ..constants import (
+    CHAIN_INTERNAL_PORTS,
+    COINBASE_MATURITY,
+    EARLY_BLOCK_SUBSIDY_BTC,
+    LND_CHANNEL_CORE_RESERVE_BTC,
+)
 from ..context import BuildContext, Fragment
 
 # Map each supported chain to the bitcoin-cli network flag.
 _CHAIN_FLAG = {"regtest": "-regtest"}
+
+
+def _initial_blocks(ctx: BuildContext) -> int:
+    """Effective initial maturity blocks.
+
+    When auto-channels are on, the funding wallet must hold enough *matured*
+    coinbase to send each node ``fund_btc`` and keep the core reserve, so we bump
+    the initial height to mature enough coinbases (a coinbase at height h matures
+    at h+100). For custom-signet this is essential — the signer is the only block
+    producer; on regtest the setup sidecar can also mine on demand.
+    """
+    configured = ctx.net.miner.initial_blocks
+    if not ctx.net.lnd_channels_enabled(ctx.spec):
+        return configured
+    need_btc = 2 * ctx.net.lnd.channels.fund_btc + LND_CHANNEL_CORE_RESERVE_BTC
+    coinbases = math.ceil(need_btc / EARLY_BLOCK_SUBSIDY_BTC)
+    funding_min = COINBASE_MATURITY + coinbases + 3  # +3 margin
+    return max(configured, funding_min)
 
 _SIGNET_MINER_SRC = Path(__file__).resolve().parent.parent / "signet_miner"
 
@@ -94,7 +118,7 @@ def _build_signet_miner(ctx: BuildContext) -> Fragment:
         services={"miner": service},
         env={
             "MINER_INTERVAL": str(ctx.net.miner.block_interval_seconds),
-            "MINER_INITIAL_BLOCKS": str(ctx.net.miner.initial_blocks),
+            "MINER_INITIAL_BLOCKS": str(_initial_blocks(ctx)),
             "SIGNET_MINER_WIF": ctx.secrets["SIGNET_MINER_WIF"],
         },
     )
@@ -134,6 +158,6 @@ def build_miner(ctx: BuildContext) -> Fragment:
         services={"miner": service},
         env={
             "MINER_INTERVAL": str(ctx.net.miner.block_interval_seconds),
-            "MINER_INITIAL_BLOCKS": str(ctx.net.miner.initial_blocks),
+            "MINER_INITIAL_BLOCKS": str(_initial_blocks(ctx)),
         },
     )

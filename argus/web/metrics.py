@@ -31,7 +31,9 @@ from ..constants import NETWORK_ORDER
 
 # Buckets we aggregate usage into. A network's row in the page asks for usage by
 # one of these (fulcrum indexers use their own name-derived bucket, see below).
-_KEYWORD_BUCKETS = ("bitcoind", "miner", "lnd", "cashu", "mempool", "fulcrum")
+# "lnd2" precedes "lnd" so the optional second node + its sidecar are attributed
+# separately (substring match would otherwise fold "lnd2" into "lnd").
+_KEYWORD_BUCKETS = ("bitcoind", "miner", "lnd2", "lnd", "cashu", "mempool", "fulcrum")
 
 
 def _split_net(rest: str) -> tuple[str | None, str]:
@@ -101,8 +103,9 @@ class MetricsResult:
     # usage[net_key][bucket] -> {"ram": int, "disk": int}
     usage: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
     host: dict[str, int | None] = field(default_factory=dict)
-    # lnd[net_key] -> identity pubkey (hex), when discoverable.
+    # lnd[net_key] / lnd2[net_key] -> identity pubkey (hex), when discoverable.
     lnd: dict[str, str] = field(default_factory=dict)
+    lnd2: dict[str, str] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -110,19 +113,21 @@ class MetricsResult:
             "usage": self.usage,
             "host": self.host,
             "lnd": self.lnd,
+            "lnd2": self.lnd2,
             "errors": self.errors,
         }
 
 
-def _lnd_pubkey(client, net_key: str) -> str | None:
-    """Read the LND identity pubkey from the node-info file via the Docker API.
+def _lnd_pubkey(client, net_key: str, service: str = "lnd") -> str | None:
+    """Read an LND identity pubkey from the node-info file via the Docker API.
 
     Uses get_archive (a GET, allowed by the read-only socket proxy) so the
-    dashboard needs no per-network volume or network wiring. Returns None if the
-    network isn't deployed yet or the file isn't there.
+    dashboard needs no per-network volume or network wiring. ``service`` is the
+    compose service name ("lnd" or the optional second node "lnd2"). Returns None
+    if the network/node isn't deployed yet or the file isn't there.
     """
     try:
-        ct = client.containers.get(f"argus-{net_key}-lnd")
+        ct = client.containers.get(f"argus-{net_key}-{service}")
         bits, _ = ct.get_archive(_LND_NODEINFO_PATH)
         tf = tarfile.open(fileobj=io.BytesIO(b"".join(bits)))
         member = tf.extractfile(tf.getmembers()[0])
@@ -196,6 +201,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
     recorded in ``errors``."""
     usage: dict[str, dict[str, Usage]] = {}
     lnd: dict[str, str] = {}
+    lnd2: dict[str, str] = {}
     errors: list[str] = []
 
     try:
@@ -246,11 +252,14 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         except Exception as exc:
             errors.append(f"disk usage (system/df): {exc}")
 
-        # LND identity pubkeys (per network), best-effort.
+        # LND identity pubkeys (per network, both nodes), best-effort.
         for net_key in net_keys or []:
             pubkey = _lnd_pubkey(client, net_key)
             if pubkey:
                 lnd[net_key] = pubkey
+            pubkey2 = _lnd_pubkey(client, net_key, service="lnd2")
+            if pubkey2:
+                lnd2[net_key] = pubkey2
 
     host, herrs = _host_metrics()
     serialisable = {
@@ -258,5 +267,5 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         for net, buckets in usage.items()
     }
     return MetricsResult(
-        usage=serialisable, host=host, lnd=lnd, errors=errors + herrs
+        usage=serialisable, host=host, lnd=lnd, lnd2=lnd2, errors=errors + herrs
     )

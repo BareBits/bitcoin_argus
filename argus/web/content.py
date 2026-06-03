@@ -46,13 +46,14 @@ VARIANTS: dict[str, Variant] = {
         ),
         pros=(
             "Fast confirmations — the operator mines a block about once a minute",
-            "Isolated, reset-able environment maintained by the operator",
+            "When the P2P port is public, you can attach your own regtest node and "
+            "mine blocks yourself (see the mining recipe below)",
             "Connect an Electrum wallet to the public indexer and start testing",
         ),
         cons=(
-            "You can't mine, reset, or get coins on demand here — that is "
-            "operator-controlled (those need Bitcoin Core RPC, which is not public)",
-            "Not a public network; no realistic peer behaviour",
+            "Trivial mining difficulty + a public P2P port means ANYONE can mine, "
+            "so expect reorgs — please mine only the blocks you actually need",
+            "Operator-controlled resets; coins/wallet admin (Core RPC) stay private",
         ),
     ),
     "custom-signet": Variant(
@@ -158,7 +159,12 @@ class AttachCommand:
     audience: str = "visitor"  # "visitor" (anyone) or "operator" (host access only)
 
 
-def attach_commands(net_key: str, hostname: str, ports: dict[str, int]) -> list[AttachCommand]:
+def attach_commands(
+    net_key: str,
+    hostname: str,
+    ports: dict[str, int],
+    p2p_public: bool = True,
+) -> list[AttachCommand]:
     """Suggested CLI recipes for connecting to this network.
 
     Visitor recipes use the public ports (e.g. Electrum -> the public Fulcrum
@@ -166,10 +172,38 @@ def attach_commands(net_key: str, hostname: str, ports: dict[str, int]) -> list[
     bound to the server's localhost and is reachable only by someone with shell
     access to the host — it is shown for completeness, clearly marked, not as
     something a visitor can use.
+
+    On regtest, when the node's P2P port is public, a visitor *can* mine: they run
+    their own regtest node peered with ours and call ``generatetoaddress`` locally
+    (their blocks propagate over P2P). ``p2p_public`` gates that recipe.
     """
     spec = NETWORK_SPECS[net_key]
     chain = spec.chain
     cmds: list[AttachCommand] = []
+
+    # Visitor mining recipe — only regtest (signet needs the operator's signing
+    # key) and only when the P2P port is actually exposed.
+    if net_key == "regtest" and p2p_public:
+        p2p = ports["bitcoind_p2p"]
+        cmds.append(
+            AttachCommand(
+                label="Mine regtest blocks (attach your own node)",
+                command=(
+                    f"# Peer your own regtest node with ours, then mine to your wallet:\n"
+                    f"bitcoind -regtest -addnode={hostname}:{p2p} -daemon\n"
+                    f"bitcoin-cli -regtest generatetoaddress 1 "
+                    f"$(bitcoin-cli -regtest getnewaddress)"
+                ),
+                note=(
+                    "Please be considerate: this is a shared chain — mine only the "
+                    "blocks you need. Over-mining or deep reorgs disrupt others "
+                    "(handy for robustness testing, but don't overdo it). The "
+                    "operator enables this port after the Lightning channel setup "
+                    "completes, so it may be closed right after a fresh deploy."
+                ),
+                audience="visitor",
+            )
+        )
 
     # First Fulcrum instance, if any, exposes a public Electrum TCP port — this
     # is the recipe a visitor actually uses.

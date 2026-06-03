@@ -38,7 +38,10 @@ def test_bitcoind_rpc_bound_to_loopback(tmp_path):
 
 
 def test_bitcoind_p2p_published_and_firewalled(tmp_path):
-    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    # With the auto-channel feature off, regtest P2P is published + firewalled.
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "lnd": {"channels": {"enabled": False}}}}))
     compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
     ports = compose["services"]["bitcoind"]["ports"]
     # P2P (30000 -> internal 18444) published publicly (no 127.0.0.1 prefix).
@@ -46,6 +49,73 @@ def test_bitcoind_p2p_published_and_firewalled(tmp_path):
     assert "listen=1" in _read(out / "regtest" / "bitcoin" / "bitcoin.conf")
     fw = _read(out / "firewall.sh")
     assert "ufw allow 30000/tcp" in fw and "bitcoind p2p" in fw
+
+
+def test_regtest_p2p_gated_by_default(tmp_path):
+    # Auto-channels default on for regtest, so mining P2P is held closed until
+    # open-mining.sh: not published on `up`, not in the firewall, but an override
+    # + open-mining.sh are generated to expose it after channel setup.
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    ports = compose["services"]["bitcoind"]["ports"]
+    # Only the loopback RPC port is published; no P2P mapping at all.
+    assert ports == ["127.0.0.1:30001:18443"]
+    fw = _read(out / "firewall.sh")
+    assert "bitcoind p2p" not in fw  # not opened by the main firewall script
+    om = _read(out / "open-mining.sh")
+    assert 'open_net "regtest" "argus-regtest" "30000"' in om
+    assert "lnd-channels" in om  # gates opening on channel setup completing
+    override = yaml.safe_load(_read(out / "regtest" / "open-mining.override.yml"))
+    assert "30000:18444" in override["services"]["bitcoind"]["ports"]
+
+
+def test_custom_signet_p2p_not_gated(tmp_path):
+    # Custom-signet is never gated (outsiders can't mine it), so its P2P is
+    # published normally even with channels on, and there's no open-mining.sh.
+    out, _ = _gen(tmp_path, make({"custom-signet": {
+        "enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "custom-signet" / "docker-compose.yml"))
+    assert "35000:38333" in compose["services"]["bitcoind"]["ports"]
+    assert not (out / "open-mining.sh").exists()
+
+
+def test_secondary_lnd_and_channel_sidecars(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    svcs = compose["services"]
+    assert {"lnd", "lnd2", "lnd-nodeinfo", "lnd2-nodeinfo",
+            "lnd-setup", "lnd-channels"} <= set(svcs)
+    # Second node: P2P public (30013), gRPC/REST loopback.
+    assert "30013:9735" in svcs["lnd2"]["ports"]
+    assert "127.0.0.1:30015:10009" in svcs["lnd2"]["ports"]
+    # Aliases/colors distinguish the two nodes.
+    assert "alias=argus1" in _read(out / "regtest" / "lnd" / "lnd.conf")
+    assert "alias=argus2" in _read(out / "regtest" / "lnd2" / "lnd.conf")
+    # Setup sidecar (bitcoind image) funds; channels sidecar (LND image) opens.
+    assert svcs["lnd-setup"]["image"] == "${BITCOIND_IMAGE}"
+    assert svcs["lnd-channels"]["image"] == "${LND_IMAGE}"
+    assert svcs["lnd-setup"]["environment"]["FUNDING_WALLET"] == "miner"
+    assert "lnd_setup_state" in compose["volumes"]
+
+
+def test_single_lnd_when_secondary_off(tmp_path):
+    out, _ = _gen(tmp_path, make({"signet": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "signet" / "docker-compose.yml"))
+    svcs = set(compose["services"])
+    assert "lnd" in svcs
+    assert not ({"lnd2", "lnd-setup", "lnd-channels"} & svcs)
+    # No second node => no funding/channel orchestration, no open-mining.
+    assert not (out / "open-mining.sh").exists()
+
+
+def test_lnd_discovery_knobs(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    conf = _read(out / "regtest" / "lnd" / "lnd.conf")
+    # Discoverable + open to large channels so peers can easily open to us.
+    assert "externalip=x.com:30010" in conf
+    assert "protocol.wumbo-channels=true" in conf  # auto-on for 10 BTC channels
+    assert "accept-amp=true" in conf
+    assert "color=#3399ff" in conf
 
 
 def test_bitcoind_p2p_loopback_when_not_public(tmp_path):

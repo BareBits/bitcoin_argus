@@ -92,7 +92,19 @@ networks:
 #               # p2p_public (default true): publish + firewall the node's P2P
 #               # port so peers can connect. Set false to keep it loopback-only
 #               # (e.g. to stop strangers reorging a trivial-difficulty regtest).
-#   lnd:      { extra_args: [...], extra_env: {...}, auto_compact: true }
+#   lnd:      { name, color, extra_args: [...], extra_env: {...}, auto_compact,
+#               advertise_external_ip: true, wumbo, min_chan_size,
+#               secondary: { enabled, name: argus2, color },
+#               channels: { enabled, fund_btc: 25, channel_btc: 10 } }
+#               # On regtest + custom-signet a SECOND LND node (argus2) is
+#               # deployed by default and the two are auto-funded (25 BTC each)
+#               # and wired with a 10 BTC channel in each direction. name/color
+#               # set the gossip alias (<=32 bytes) + color. advertise_external_ip
+#               # publishes <hostname>:<p2p> in gossip so peers can find us.
+#               # Set secondary.enabled/channels.enabled false to opt out.
+#               # NOTE: on regtest the bitcoind P2P (mining) port stays CLOSED on
+#               # `up` until you run generated/open-mining.sh (after channel setup
+#               # completes) — that keeps funding safe from adversarial reorgs.
 #   cashu:    { enabled, ssl, extra_env: {...} }
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,

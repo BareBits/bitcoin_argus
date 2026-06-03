@@ -15,7 +15,7 @@ that network.
 | Service | Purpose | Internet exposure |
 | --- | --- | --- |
 | **bitcoind** (Knots for mutinynet) | The Bitcoin node | RPC/ZMQ closed (loopback/internal only) |
-| **LND** | Lightning node (used by Cashu) | P2P open; gRPC/REST closed |
+| **LND** (`argus1`, + `argus2` on mined nets) | Lightning node(s); on regtest/custom-signet two nodes are auto-funded and wired with channels | P2P open; gRPC/REST closed |
 | **Fulcrum** (≥1) | Electrum server for light wallets + mempool backend | Electrum port open |
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
@@ -67,7 +67,18 @@ bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy
 cd generated/web && docker compose up -d --build       # the dashboard (builds its image)
 sudo bash generated/firewall.sh                       # open the public ports
+
+# 3. Regtest only: after the LND channel setup completes (the lnd-channels
+#    container exits 0), open the mining P2P port so others can mine:
+sudo bash generated/open-mining.sh
 ```
+
+On **regtest**, two LND nodes (`argus1` + `argus2`) come up, get funded 25 BTC
+each, and open a 10 BTC channel to each other; bitcoind's P2P (mining) port stays
+closed until `open-mining.sh` runs, so the funding can't be reorged out from
+under us. Once open, anyone can attach a regtest node and mine — see the mining
+recipe on the dashboard. Disable with `lnd.secondary.enabled: false` /
+`lnd.channels.enabled: false`.
 
 > When the set of Caddy sites/ports changes, **restart the Caddy container**
 > (`docker restart argus-caddy`) — a hot `caddy reload` won't bind new

@@ -93,6 +93,14 @@ ZMQ_TX_INTERNAL = 28333
 # LND's in-container listen ports (identical across isolated networks).
 LND_INTERNAL_PORTS: dict[str, int] = {"p2p": 9735, "grpc": 10009, "rest": 8080}
 
+# Auto-channel funding: BTC kept in the core/funding wallet after funding both
+# nodes (the "25 BTC stays in core" goal; the steady miner grows it further).
+LND_CHANNEL_CORE_RESERVE_BTC = 25.0
+# Early block subsidy on regtest/signet (BTC); used to size the initial maturity
+# mining so the funding wallet has enough spendable coinbase.
+EARLY_BLOCK_SUBSIDY_BTC = 50.0
+COINBASE_MATURITY = 100
+
 # Fulcrum's in-container listen ports.
 FULCRUM_INTERNAL_PORTS: dict[str, int] = {"tcp": 50001, "ssl": 50002, "admin": 8000}
 
@@ -124,6 +132,11 @@ PORT_OFFSETS: dict[str, int] = {
     "lnd_p2p": 10,  # PUBLIC
     "lnd_rest": 11,  # 127.0.0.1
     "lnd_grpc": 12,  # 127.0.0.1 (closed to internet)
+    # Optional second LND node (mined networks only; allocated for collision
+    # checks, published/firewalled only when lnd.secondary is enabled).
+    "lnd2_p2p": 13,  # PUBLIC
+    "lnd2_rest": 14,  # 127.0.0.1
+    "lnd2_grpc": 15,  # 127.0.0.1 (closed to internet)
     # Bitcart's btclnd uses contiguous p2p/gRPC pools (see *_OFFSET below),
     # not single ports.
     # Caddy public listeners for HTTP services:

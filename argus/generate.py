@@ -12,6 +12,7 @@ from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
 from .context import BuildContext, Fragment
 from .firewall import generate_firewall
+from .open_mining import generate_open_mining
 from .ports import allocate
 from .resources import log_options, resolve
 from .secrets import load_or_create
@@ -145,5 +146,8 @@ def generate(
 
     # Firewall script opens the public ports across all enabled networks.
     generate_firewall(cfg, port_map, Path(output_dir))
+
+    # open-mining.sh (+ overrides) for any gated-P2P network (regtest channels).
+    generate_open_mining(cfg, port_map, Path(output_dir))
 
     return dirs

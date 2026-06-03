@@ -117,6 +117,21 @@ def build_bitcoind(ctx: BuildContext) -> Fragment:
     )
 
     rpc_host_port = ctx.ports["bitcoind_rpc"]
+    gated = ctx.net.bitcoind_p2p_gated(ctx.net_key, ctx.spec)
+    p2p_host_port = ctx.ports["bitcoind_p2p"]
+    # RPC is always closed (loopback only).
+    port_maps = [f"127.0.0.1:{rpc_host_port}:{internal['rpc']}"]
+    if gated:
+        # Regtest mining P2P: NOT published at all on `up`, so the chain is
+        # private while LND channels are funded/confirmed. The operator opens it
+        # afterwards via open-mining.sh (a compose override that re-publishes it).
+        pass
+    elif ctx.net.bitcoind.p2p_public:
+        # Public by default so peers can connect their own node (firewall opens it).
+        port_maps.append(f"{p2p_host_port}:{internal['p2p']}")
+    else:
+        # Loopback only (operator-only) — e.g. to stop strangers reorging regtest.
+        port_maps.append(f"127.0.0.1:{p2p_host_port}:{internal['p2p']}")
     service = {
         "image": f"${{{image_var}}}",
         "container_name": f"{ctx.project}-bitcoind",
@@ -126,17 +141,7 @@ def build_bitcoind(ctx: BuildContext) -> Fragment:
             "bitcoind_data:/data",
             "./bitcoin/bitcoin.conf:/data/bitcoin.conf:ro",
         ],
-        "ports": [
-            # RPC is closed (loopback only). P2P is public by default (opened by
-            # the firewall script) so peers can connect their own node; with
-            # bitcoind.p2p_public=false it binds to loopback only.
-            f"127.0.0.1:{rpc_host_port}:{internal['rpc']}",
-            (
-                f"{ctx.ports['bitcoind_p2p']}:{internal['p2p']}"
-                if ctx.net.bitcoind.p2p_public
-                else f"127.0.0.1:{ctx.ports['bitcoind_p2p']}:{internal['p2p']}"
-            ),
-        ],
+        "ports": port_maps,
         "networks": [ctx.network_name],
         "healthcheck": {
             "test": [
