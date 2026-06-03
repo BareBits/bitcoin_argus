@@ -113,7 +113,8 @@ def test_lnd_discovery_knobs(tmp_path):
     conf = _read(out / "regtest" / "lnd" / "lnd.conf")
     # Discoverable + open to large channels so peers can easily open to us.
     assert "externalip=x.com:30010" in conf
-    assert "protocol.wumbo-channels=true" in conf  # auto-on for 10 BTC channels
+    # Wumbo auto-on for 10 BTC channels, emitted in its own [protocol] section.
+    assert "[protocol]\nprotocol.wumbo-channels=true" in conf
     assert "accept-amp=true" in conf
     assert "color=#3399ff" in conf
 
@@ -136,8 +137,16 @@ def test_lnd_nodeinfo_sidecar(tmp_path):
     assert "lnd-nodeinfo" in compose["services"]
     side = compose["services"]["lnd-nodeinfo"]
     assert side["depends_on"]["lnd"]["condition"] == "service_healthy"
-    assert "argus_nodeinfo.json" in " ".join(side["entrypoint"])
     assert side["restart"] == "on-failure"
+    # Runs from a mounted script (not an inline entrypoint) so compose's variable
+    # interpolation can't mangle the shell ``$i``/``$A`` references.
+    assert side["entrypoint"] == ["/bin/sh", "/scripts/nodeinfo.sh"]
+    assert any("nodeinfo.sh:/scripts/nodeinfo.sh:ro" in v for v in side["volumes"])
+    assert side["environment"]["RPCSERVER"] == "lnd:10009"
+    # Channels on for regtest => the node writes a funding address too.
+    assert side["environment"]["WRITE_ADDR"] == "1"
+    script = _read(out / "regtest" / "lnd" / "nodeinfo.sh")
+    assert "argus_nodeinfo.json" in script and "newaddress p2wkh" in script
 
 
 def test_bitcoin_conf_contents(tmp_path):
