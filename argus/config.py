@@ -340,8 +340,9 @@ class NetworkCfg(_Base):
         return (spec.supports_miner and self.miner.enabled) if v is None else v
 
     def bitcoind_p2p_gated(self, net_key: str, spec: NetworkSpec) -> bool:
-        """Regtest mining P2P is held closed (not published) until LND channel
-        setup completes; the operator opens it with the generated open-mining.sh.
+        """Whether bitcoind self-gates its P2P listener (regtest auto-channels):
+        it keeps inbound P2P closed until LND channel setup completes, then
+        restarts with P2P open — so funding can't be reorged during setup.
 
         Only regtest needs this — on custom-signet outsiders can't produce valid
         blocks without our signing key, so early P2P exposure can't be abused.

@@ -197,9 +197,9 @@ def attach_commands(
                 note=(
                     "Please be considerate: this is a shared chain — mine only the "
                     "blocks you need. Over-mining or deep reorgs disrupt others "
-                    "(handy for robustness testing, but don't overdo it). The "
-                    "operator enables this port after the Lightning channel setup "
-                    "completes, so it may be closed right after a fresh deploy."
+                    "(handy for robustness testing, but don't overdo it). This port "
+                    "opens automatically once the node's two Lightning channels are "
+                    "set up, so it may be briefly closed right after a fresh deploy."
                 ),
                 audience="visitor",
             )

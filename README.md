@@ -67,18 +67,14 @@ bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy
 cd generated/web && docker compose up -d --build       # the dashboard (builds its image)
 sudo bash generated/firewall.sh                       # open the public ports
-
-# 3. Regtest only: after the LND channel setup completes (the lnd-channels
-#    container exits 0), open the mining P2P port so others can mine:
-sudo bash generated/open-mining.sh
 ```
 
 On **regtest**, two LND nodes (`argus1` + `argus2`) come up, get funded 25 BTC
-each, and open a 10 BTC channel to each other; bitcoind's P2P (mining) port stays
-closed until `open-mining.sh` runs, so the funding can't be reorged out from
-under us. Once open, anyone can attach a regtest node and mine — see the mining
-recipe on the dashboard. Disable with `lnd.secondary.enabled: false` /
-`lnd.channels.enabled: false`.
+each, and open a 10 BTC channel to each other. bitcoind keeps its P2P (mining)
+port closed until that channel setup completes — so the funding can't be reorged
+out from under us — then **reopens it automatically**. Once open, anyone can
+attach a regtest node and mine (see the recipe on the dashboard). Disable with
+`lnd.secondary.enabled: false` / `lnd.channels.enabled: false`.
 
 > When the set of Caddy sites/ports changes, **restart the Caddy container**
 > (`docker restart argus-caddy`) — a hot `caddy reload` won't bind new

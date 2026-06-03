@@ -102,9 +102,9 @@ networks:
 #               # set the gossip alias (<=32 bytes) + color. advertise_external_ip
 #               # publishes <hostname>:<p2p> in gossip so peers can find us.
 #               # Set secondary.enabled/channels.enabled false to opt out.
-#               # NOTE: on regtest the bitcoind P2P (mining) port stays CLOSED on
-#               # `up` until you run generated/open-mining.sh (after channel setup
-#               # completes) — that keeps funding safe from adversarial reorgs.
+#               # NOTE: on regtest the bitcoind P2P (mining) port stays CLOSED
+#               # until channel setup completes, then bitcoind reopens it
+#               # automatically — keeping funding safe from adversarial reorgs.
 #   cashu:    { enabled, ssl, extra_env: {...} }
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,

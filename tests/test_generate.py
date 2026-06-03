@@ -51,31 +51,34 @@ def test_bitcoind_p2p_published_and_firewalled(tmp_path):
     assert "ufw allow 30000/tcp" in fw and "bitcoind p2p" in fw
 
 
-def test_regtest_p2p_gated_by_default(tmp_path):
-    # Auto-channels default on for regtest, so mining P2P is held closed until
-    # open-mining.sh: not published on `up`, not in the firewall, but an override
-    # + open-mining.sh are generated to expose it after channel setup.
+def test_regtest_p2p_self_gated_by_default(tmp_path):
+    # Auto-channels default on for regtest: the P2P port is published normally,
+    # but bitcoind runs a self-gate wrapper that keeps its inbound listener closed
+    # until the lnd-channels marker appears, then restarts with P2P open. No
+    # operator step / open-mining.sh.
     out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
-    ports = compose["services"]["bitcoind"]["ports"]
-    # Only the loopback RPC port is published; no P2P mapping at all.
-    assert ports == ["127.0.0.1:30001:18443"]
+    bitcoind = compose["services"]["bitcoind"]
+    assert "30000:18444" in bitcoind["ports"]  # published normally
+    # Wrapper entrypoint + shared state volume (read-only) to watch the marker.
+    assert bitcoind["entrypoint"] == ["/bin/sh", "/scripts/bitcoind-gate.sh"]
+    assert "lnd_setup_state:/state:ro" in bitcoind["volumes"]
+    gate = _read(out / "regtest" / "bitcoin" / "bitcoind-gate.sh")
+    assert "-listen=0" in gate and "/state/channels" in gate
     fw = _read(out / "firewall.sh")
-    assert "bitcoind p2p" not in fw  # not opened by the main firewall script
-    om = _read(out / "open-mining.sh")
-    assert 'open_net "regtest" "argus-regtest" "30000"' in om
-    assert "lnd-channels" in om  # gates opening on channel setup completing
-    override = yaml.safe_load(_read(out / "regtest" / "open-mining.override.yml"))
-    assert "30000:18444" in override["services"]["bitcoind"]["ports"]
+    assert "ufw allow 30000/tcp" in fw  # auto-opening port is firewalled open
+    assert not (out / "open-mining.sh").exists()
 
 
 def test_custom_signet_p2p_not_gated(tmp_path):
-    # Custom-signet is never gated (outsiders can't mine it), so its P2P is
-    # published normally even with channels on, and there's no open-mining.sh.
+    # Custom-signet is never gated (outsiders can't mine it), so bitcoind uses the
+    # plain image entrypoint (no self-gate wrapper).
     out, _ = _gen(tmp_path, make({"custom-signet": {
         "enabled": True, "bitcart": BITCART_OFF}}))
     compose = yaml.safe_load(_read(out / "custom-signet" / "docker-compose.yml"))
-    assert "35000:38333" in compose["services"]["bitcoind"]["ports"]
+    bitcoind = compose["services"]["bitcoind"]
+    assert "35000:38333" in bitcoind["ports"]
+    assert "entrypoint" not in bitcoind
     assert not (out / "open-mining.sh").exists()
 
 
