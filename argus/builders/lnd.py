@@ -131,8 +131,31 @@ def build_lnd(ctx: BuildContext) -> Fragment:
     if ctx.net.lnd.extra_env:
         service["environment"] = dict(ctx.net.lnd.extra_env)
 
+    # One-shot sidecar: once LND is healthy, record its identity pubkey to a file
+    # in the data volume. The dashboard reads it (read-only, via the Docker API)
+    # to show the node's connection URI and link it on the explorer — without the
+    # dashboard needing any per-network volume/network wiring of its own.
+    out = f"{lnddir}/argus_nodeinfo.json"
+    nodeinfo_cmd = (
+        "i=0; while [ $i -lt 120 ]; do "
+        f"lncli --lnddir={lnddir} --network={lnd_net} --rpcserver=lnd:{p['grpc']} "
+        f"getinfo > {out} 2>/dev/null && [ -s {out} ] && exit 0; "
+        "i=$((i+1)); sleep 5; done; exit 1"
+    )
+    nodeinfo = {
+        "image": "${LND_IMAGE}",
+        "container_name": f"{ctx.project}-lnd-nodeinfo",
+        # Exits 0 once it writes the pubkey; on-failure so a slow LND sync (e.g.
+        # after a bitcoind restart) just gets retried instead of giving up.
+        "restart": "on-failure",
+        "depends_on": {"lnd": {"condition": "service_healthy"}},
+        "entrypoint": ["/bin/sh", "-c", nodeinfo_cmd],
+        "volumes": [f"lnd_data:{lnddir}"],
+        "networks": [ctx.network_name],
+    }
+
     return Fragment(
-        services={"lnd": service},
+        services={"lnd": service, "lnd-nodeinfo": nodeinfo},
         volumes={"lnd_data": {}},
         env={"LND_IMAGE": ctx.cfg.global_.lnd_image},
     )

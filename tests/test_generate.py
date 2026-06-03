@@ -37,6 +37,39 @@ def test_bitcoind_rpc_bound_to_loopback(tmp_path):
     assert not any(p.startswith("30001:") or p.startswith("0.0.0.0:30001") for p in ports)
 
 
+def test_bitcoind_p2p_published_and_firewalled(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    ports = compose["services"]["bitcoind"]["ports"]
+    # P2P (30000 -> internal 18444) published publicly (no 127.0.0.1 prefix).
+    assert any(p == "30000:18444" for p in ports)
+    assert "listen=1" in _read(out / "regtest" / "bitcoin" / "bitcoin.conf")
+    fw = _read(out / "firewall.sh")
+    assert "ufw allow 30000/tcp" in fw and "bitcoind p2p" in fw
+
+
+def test_bitcoind_p2p_loopback_when_not_public(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "bitcoind": {"p2p_public": False}}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    ports = compose["services"]["bitcoind"]["ports"]
+    # Bound to loopback, never on 0.0.0.0, and not in the firewall.
+    assert "127.0.0.1:30000:18444" in ports
+    assert "30000:18444" not in ports
+    assert "bitcoind p2p" not in _read(out / "firewall.sh")
+
+
+def test_lnd_nodeinfo_sidecar(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    assert "lnd-nodeinfo" in compose["services"]
+    side = compose["services"]["lnd-nodeinfo"]
+    assert side["depends_on"]["lnd"]["condition"] == "service_healthy"
+    assert "argus_nodeinfo.json" in " ".join(side["entrypoint"])
+    assert side["restart"] == "on-failure"
+
+
 def test_bitcoin_conf_contents(tmp_path):
     out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OK}}))
     conf = _read(out / "regtest" / "bitcoin" / "bitcoin.conf")

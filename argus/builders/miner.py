@@ -1,18 +1,30 @@
-"""Builder for the regtest block-producing sidecar.
+"""Builder for the block-producing sidecar.
 
-Mines the initial coinbase-maturity blocks, then produces one block on a fixed
-interval (default 60s). Currently regtest-only; signet (custom-signet) mining
-needs the signet miner tool and is a later phase — config validation enforces
-this so an unsupported network never reaches here.
+Two flavours, both producing the initial coinbase-maturity blocks and then one
+block per interval (default 60s):
+
+* **regtest** — a tiny shell loop calling ``generatetoaddress``.
+* **custom signet** — a container built from the stock bitcoind image plus
+  Python and the vendored Bitcoin Core signet miner (see ``argus/signet_miner``).
+  It signs blocks with the auto-generated challenge key and grinds at minimum
+  signet difficulty.
+
+Config validation restricts the miner to these chains, so an unsupported network
+never reaches here.
 """
 
 from __future__ import annotations
+
+import shutil
+from pathlib import Path
 
 from ..constants import CHAIN_INTERNAL_PORTS
 from ..context import BuildContext, Fragment
 
 # Map each supported chain to the bitcoin-cli network flag.
 _CHAIN_FLAG = {"regtest": "-regtest"}
+
+_SIGNET_MINER_SRC = Path(__file__).resolve().parent.parent / "signet_miner"
 
 _MINE_SH = """\
 #!/bin/sh
@@ -46,8 +58,52 @@ done
 """
 
 
+def _build_signet_miner(ctx: BuildContext) -> Fragment:
+    """A built-image miner that signs + mines a self-mined custom signet."""
+    miner_dir = ctx.out_dir / "miner"
+    if miner_dir.exists():
+        shutil.rmtree(miner_dir)
+    shutil.copytree(
+        _SIGNET_MINER_SRC,
+        miner_dir,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
+    rpc_internal = CHAIN_INTERNAL_PORTS["signet"]["rpc"]
+    service = {
+        "build": {
+            "context": "./miner",
+            "args": {"BITCOIND_IMAGE": "${BITCOIND_IMAGE}"},
+        },
+        "image": f"{ctx.project}-signet-miner:local",
+        "container_name": f"{ctx.project}-miner",
+        "restart": "unless-stopped",
+        "depends_on": {"bitcoind": {"condition": "service_healthy"}},
+        "environment": {
+            "RPC_CONNECT": "bitcoind",
+            "RPC_PORT": str(rpc_internal),
+            "RPC_USER": "${RPC_USER}",
+            "RPC_PASSWORD": "${RPC_PASSWORD}",
+            "SIGNET_MINER_WIF": "${SIGNET_MINER_WIF}",
+            "INTERVAL": "${MINER_INTERVAL}",
+            "INITIAL_BLOCKS": "${MINER_INITIAL_BLOCKS}",
+        },
+        "networks": [ctx.network_name],
+    }
+    return Fragment(
+        services={"miner": service},
+        env={
+            "MINER_INTERVAL": str(ctx.net.miner.block_interval_seconds),
+            "MINER_INITIAL_BLOCKS": str(ctx.net.miner.initial_blocks),
+            "SIGNET_MINER_WIF": ctx.secrets["SIGNET_MINER_WIF"],
+        },
+    )
+
+
 def build_miner(ctx: BuildContext) -> Fragment:
     chain = ctx.spec.chain
+    if chain == "signet":
+        return _build_signet_miner(ctx)
     if chain not in _CHAIN_FLAG:  # defensive; config validation should prevent this
         raise NotImplementedError(f"miner not implemented for chain {chain!r}")
 

@@ -6,7 +6,10 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2", "PyYAML>=6"]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+# Runtime deps for the dashboard (argus.web); also mirrored in argus/web/requirements.txt.
+web = ["Flask>=3,<4", "gunicorn>=21", "peewee>=3.17", "psutil>=5.9", "docker>=7"]
+# The test extra pulls in what the web unit tests import (docker is mocked).
+test = ["pytest>=8", "Flask>=3,<4", "peewee>=3.17", "psutil>=5.9"]
 
 [project.scripts]
 argus = "argus.cli:main"
@@ -19,4 +22,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["argus", "argus.builders"]
+packages = ["argus", "argus.builders", "argus.web"]
+
+[tool.setuptools.package-data]
+"argus.web" = ["templates/*.html", "static/**/*", "requirements.txt"]
+"argus" = ["signet_miner/**/*", "signet_miner/miner"]

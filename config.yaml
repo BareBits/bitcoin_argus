@@ -22,6 +22,21 @@ global:
     # fulcrum_db_mem: 600           # MiB     fulcrum_db_max_open_files: 200
     # mempool_mariadb_buffer_mb: 128
 
+# The dashboard: a web server (fronted by the shared Caddy) that welcomes
+# visitors and reports live, per-service resource usage. It serves at the site
+# root (https://<hostname>/) by default. Live disk/RAM figures are read through a
+# read-only Docker-API proxy and cached for an hour.
+web:
+  enabled: true                   # set false to skip generating generated/web/
+  ssl: true                       # follows global.ssl_enabled too
+  # port:                         # default 443 (ssl) / 80 — set to serve on another port
+  default_theme: hacker           # one of the keys in `themes` below
+  themes:                         # name -> CSS path served under the app's /static/
+    hacker: themes/hacker.css
+    game: themes/game.css
+    bootstrap: themes/bootstrap.css
+  repo_url: https://github.com/BareBits/bitcoin_argus   # footer "run your own" link
+
 networks:
   # --- enabled by default ---------------------------------------------------
   regtest:
@@ -59,14 +74,24 @@ networks:
     # Requires global.bitcoind_knots_image (signetblocktime-capable bitcoind).
 
   custom-signet:
-    enabled: false
-    signet_challenge: ""          # REQUIRED when enabled (even-length hex)
-    # mempool defaults on; automated mining is not implemented yet — set
-    # miner.enabled: false until the signet miner lands.
+    enabled: true                 # self-mined custom signet, on by default
+    # signet_challenge: leave unset — Argus auto-generates a matched challenge +
+    # block-signing key into secrets/custom-signet/. Set it only to bring your own
+    # (in which case you also run your own signer).
+    miner:
+      enabled: true               # Argus signs + mines blocks for this signet
+      block_interval_seconds: 60  # one signed block per minute
+    bitcart:
+      admin_email: admin@example.com
+      liquidity:
+        cashout_lightning_address: pay@example.com
 
 # Per-network options available (all optional; sane defaults applied):
 #   prune: <MiB>                  # rejected if an indexer/mempool is enabled
-#   bitcoind: { extra_args: [...] }
+#   bitcoind: { extra_args: [...], p2p_public: true }
+#               # p2p_public (default true): publish + firewall the node's P2P
+#               # port so peers can connect. Set false to keep it loopback-only
+#               # (e.g. to stop strangers reorging a trivial-difficulty regtest).
 #   lnd:      { extra_args: [...], extra_env: {...}, auto_compact: true }
 #   cashu:    { enabled, ssl, extra_env: {...} }
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,

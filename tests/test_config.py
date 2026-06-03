@@ -48,10 +48,12 @@ def test_prune_ok_without_indexes():
     validated(make({"regtest": net}))  # no raise
 
 
-def test_custom_signet_requires_challenge():
-    with pytest.raises(ConfigError, match="signet_challenge"):
-        validated(make({"custom-signet": {
-            "enabled": True, "miner": {"enabled": False}, "bitcart": BITCART_OFF}}))
+def test_custom_signet_valid_without_explicit_challenge():
+    # Argus auto-generates a challenge + signing key for a custom signet, so
+    # enabling it without an explicit challenge is valid.
+    cfg = validated(make({"custom-signet": {
+        "enabled": True, "miner": {"enabled": False}, "bitcart": BITCART_OFF}}))
+    assert "custom-signet" in [k for k, _ in cfg.enabled_networks()]
 
 
 def test_mutinynet_requires_knots_image():
@@ -115,13 +117,22 @@ def test_miner_unsupported_net_is_noop():
                    ssl_enabled=False))
 
 
-def test_miner_on_custom_signet_errors():
-    # custom-signet is mineable in principle but not implemented yet.
-    with pytest.raises(ConfigError, match="mining is only implemented for regtest"):
-        validated(make({"custom-signet": {
-            "enabled": True,
-            "signet_challenge": "ab",
-            "bitcart": BITCART_OFF}}))
+def test_miner_on_custom_signet_allowed():
+    # Argus can sign + mine a custom signet, so the miner is permitted there.
+    cfg = validated(make({"custom-signet": {
+        "enabled": True,
+        "miner": {"enabled": True},
+        "bitcart": BITCART_OFF}}))
+    assert cfg.networks["custom-signet"].miner.enabled
+
+
+def test_miner_on_non_mineable_network_is_noop():
+    # A network whose blocks Argus can't drive (supports_miner is False) simply
+    # ignores the miner flag — it's valid, the registry just won't include it.
+    cfg = validated(make({"mutinynet": {
+        "enabled": True, "miner": {"enabled": True}, "bitcart": BITCART_OFF}},
+        bitcoind_knots_image="x/y:1"))
+    assert cfg.networks["mutinynet"].miner.enabled
 
 
 def test_load_config_missing_file(tmp_path):

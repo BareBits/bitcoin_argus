@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 
 from .config import ArgusConfig
-from .constants import NETWORK_SPECS
+from .constants import NETWORK_SPECS, WEB_BACKEND_PORT
 from .resources import global_log
 
 
@@ -69,6 +69,29 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
     return sites
 
 
+def web_public_port(cfg: ArgusConfig) -> int:
+    """The dashboard's public port: explicit override, else 443 (ssl) / 80."""
+    if cfg.web.port is not None:
+        return cfg.web.port
+    web_ssl = cfg.global_.ssl_enabled and cfg.web.ssl
+    return 443 if web_ssl else 80
+
+
+def _web_site_address(cfg: ArgusConfig) -> str:
+    """The Caddy site address for the dashboard.
+
+    Defaults to the bare hostname (the site root) unless a custom port is set.
+    """
+    g = cfg.global_
+    port = web_public_port(cfg)
+    web_ssl = g.ssl_enabled and cfg.web.ssl
+    host = g.hostname if web_ssl else f"http://{g.hostname}"
+    # Omit the port for the implicit scheme defaults so it stays the bare root.
+    if (web_ssl and port == 443) or (not web_ssl and port == 80):
+        return host
+    return f"{host}:{port}"
+
+
 def render_caddyfile(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> str:
     """Render the Caddyfile. Each service is a site on hostname:public_port."""
     g = cfg.global_
@@ -89,6 +112,15 @@ def render_caddyfile(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> s
         lines += [
             f"{addr} {{",
             f"    reverse_proxy 127.0.0.1:{s.backend_port}",
+            "}",
+            "",
+        ]
+
+    # The dashboard: the site root, fronting the gunicorn loopback port.
+    if cfg.web.enabled:
+        lines += [
+            f"{_web_site_address(cfg)} {{",
+            f"    reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}",
             "}",
             "",
         ]
@@ -124,8 +156,8 @@ def generate_shared(
     output_dir: Path,
 ) -> Path | None:
     """Generate the shared Caddy project. Returns its dir, or None if no HTTP
-    services are enabled."""
-    if not _http_sites(cfg, port_map):
+    services (nor the dashboard) are enabled."""
+    if not _http_sites(cfg, port_map) and not cfg.web.enabled:
         return None
 
     out_dir = output_dir / "shared"

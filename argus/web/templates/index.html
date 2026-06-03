@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Bitcoin Argus — testnet playground{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>Welcome to the Bitcoin Argus testnet playground</h1>
+  <p class="tagline">
+    A friendly little machine that exists to make <strong>Bitcoin development
+    easier</strong>. It runs a whole menu of Bitcoin test networks — with nodes,
+    indexers, explorers and payment tooling — so you can build, break and learn
+    without spending a single real satoshi. Pick a network, point your tools at
+    it, and start hacking. 🛰️
+  </p>
+</section>
+
+<details class="picker" open>
+  <summary><span class="caret"></span><h2>Which test network should I use?</h2></summary>
+  <p>
+    Reach for the most <em>contained</em> option that still exercises what you
+    need, then move outward only if you must:
+    <strong>regtest</strong> → <strong>custom signet</strong> →
+    <strong>mutinynet</strong> → <strong>signet</strong> →
+    <strong>testnet4</strong> → <strong>testnet3</strong>.
+  </p>
+  <p class="local-tip">
+    💡 <strong>For your own local development and testing, prefer Bitcoin's
+    <em>regtest</em> whenever possible</strong> — run it on your own machine and
+    you control mining, coins, and resets entirely. You can set it up with a
+    <a href="https://developer.bitcoin.org/examples/testing.html"
+       target="_blank" rel="noopener">single command</a>, and try more advanced
+    techniques like
+    <a href="https://gist.github.com/System-Glitch/cb4e87bf1ae3fec9925725bb3ebe223a"
+       target="_blank" rel="noopener">double-spends with this tutorial</a>.
+    The networks below are a <em>shared</em> playground for when you need
+    something others can reach too.
+  </p>
+</details>
+
+<details class="access-model" open>
+  <summary><span class="caret"></span><h2>Who can access what</h2></summary>
+  <p>
+    This is a <strong>shared, hosted</strong> playground. Some things are open to
+    <strong>you, the visitor</strong>; others are controlled by the
+    <strong>site operator</strong> and are not reachable over the internet.
+  </p>
+  <div class="access-cols">
+    <div>
+      <h4>You (a visitor) can</h4>
+      <ul>
+        <li>Point an <strong>Electrum</strong> wallet at the public Fulcrum servers</li>
+        <li>Use the <strong>Cashu</strong> mints, browse the <strong>mempool</strong>
+            explorers, and use <strong>Bitcart</strong></li>
+        <li>Open Lightning connections to the public <strong>LND</strong> P2P ports</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Only the operator can</h4>
+      <ul>
+        <li>Reach <strong>Bitcoin Core's RPC</strong> and LND gRPC/REST/admin
+            (bound to the server's localhost)</li>
+        <li><strong>Produce blocks</strong> — e.g. regtest blocks are mined by the
+            operator (~1/min), not by you</li>
+        <li>Reset, reconfigure, or restart any service</li>
+      </ul>
+    </div>
+  </div>
+  <p class="legend">
+    In the tables below, a <span class="port public">public</span> port is
+    reachable by you; an <span class="port closed">operator</span> port is
+    localhost-only on the server.
+  </p>
+</details>
+
+{% for s in sections %}
+<details class="net-section{% if not s.enabled %} disabled{% endif %}" id="{{ s.key }}" open>
+  <summary class="net-head">
+    <span class="caret"></span>
+    <h2>{{ s.title }}</h2>
+    <span class="status status-{{ 'enabled' if s.enabled else 'disabled' }}">
+      {{ 'enabled' if s.enabled else 'disabled' }}
+    </span>
+  </summary>
+  <p class="blurb">{{ s.variant.blurb }}</p>
+
+  <div class="proscons">
+    <div class="pros">
+      <h4>Pros</h4>
+      <ul>{% for p in s.variant.pros %}<li>{{ p }}</li>{% endfor %}</ul>
+    </div>
+    <div class="cons">
+      <h4>Cons</h4>
+      <ul>{% for c in s.variant.cons %}<li>{{ c }}</li>{% endfor %}</ul>
+    </div>
+  </div>
+
+  {% if s.enabled %}
+  <table class="svc-table">
+    <thead>
+      <tr>
+        <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>RAM</th><th>Disk</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for svc in s.services %}
+      <tr>
+        <td>{{ svc.name }}</td>
+        <td>
+          <span class="aud {{ 'aud-v' if svc.audience == 'Visitor' else 'aud-o' }}">{{ svc.audience }}</span>
+        </td>
+        <td>
+          {% for link in svc.links %}
+            <a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.label }}</a>{% if not loop.last %}, {% endif %}
+          {% else %}—{% endfor %}
+        </td>
+        <td>
+          {% for p in svc.ports %}
+            <span class="port {{ 'public' if p.public else 'closed' }}"
+                  title="{{ 'reachable by visitors' if p.public else 'operator only (server localhost)' }}">{{ p.label }}:{{ p.port }}</span>{% if not loop.last %} {% endif %}
+          {% endfor %}
+        </td>
+        <td class="num">{{ svc.ram|humanbytes }}</td>
+        <td class="num">{{ svc.disk|humanbytes }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="totals">
+        <td colspan="4">Section total</td>
+        <td class="num">{{ s.ram_total|humanbytes }}</td>
+        <td class="num">{{ s.disk_total|humanbytes }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {% if s.attach %}
+  <div class="attach">
+    <h4>Attach your tools</h4>
+    {% for a in s.attach %}
+    <div class="attach-item attach-{{ a.audience }}">
+      <div class="attach-label">
+        {{ a.label }}
+        <span class="aud {{ 'aud-v' if a.audience == 'visitor' else 'aud-o' }}">{{ 'Visitor' if a.audience == 'visitor' else 'Operator only' }}</span>
+      </div>
+      <pre class="cmd">{{ a.command }}</pre>
+      {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+</details>
+{% endfor %}
+
+<details class="host-totals" open>
+  <summary><span class="caret"></span><h2>Host capacity</h2></summary>
+  <div class="totals-grid">
+    <div class="total-card">
+      <h4>Disk</h4>
+      <p><span class="big">{{ host.disk_used|humanbytes }}</span> used
+         / {{ host.disk_free|humanbytes }} free
+         of {{ host.disk_total|humanbytes }}</p>
+    </div>
+    <div class="total-card">
+      <h4>Memory</h4>
+      <p><span class="big">{{ host.mem_used|humanbytes }}</span> used
+         / {{ host.mem_free|humanbytes }} free
+         of {{ host.mem_total|humanbytes }}</p>
+    </div>
+  </div>
+  <p class="cache-note">
+    Resource figures are cached and refresh at most once per hour
+    {% if cache_age is not none %}(updated {{ cache_age }}s ago){% endif %}.
+  </p>
+  {% if metrics_errors %}
+  <details class="metrics-errors">
+    <summary>Some metrics could not be read</summary>
+    <ul>{% for e in metrics_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</details>
+{% endblock %}

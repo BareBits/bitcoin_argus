@@ -16,6 +16,7 @@ from .ports import allocate
 from .resources import log_options, resolve
 from .secrets import load_or_create
 from .shared import generate_shared
+from .web_gen import generate_web
 
 
 def _project_name(net_key: str) -> str:
@@ -51,7 +52,12 @@ def generate_network(
     out_dir = output_dir / net_key
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    secret_values = load_or_create(net_key, secrets_dir)
+    # A self-mined custom signet (challenge required, none supplied) needs an
+    # auto-generated challenge + block-signing key persisted in the secret store.
+    needs_signet_key = spec.requires_challenge and not net.signet_challenge
+    secret_values = load_or_create(
+        net_key, secrets_dir, signet_key=needs_signet_key
+    )
 
     ctx = BuildContext(
         cfg=cfg,
@@ -131,6 +137,11 @@ def generate(
     shared_dir = generate_shared(cfg, port_map, output_dir)
     if shared_dir is not None:
         dirs.append(shared_dir)
+
+    # The dashboard spans all networks too; generated alongside the shared layer.
+    web_dir = generate_web(cfg, output_dir, config_path)
+    if web_dir is not None:
+        dirs.append(web_dir)
 
     # Firewall script opens the public ports across all enabled networks.
     generate_firewall(cfg, port_map, Path(output_dir))

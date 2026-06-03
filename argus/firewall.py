@@ -27,6 +27,8 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
         ports = port_map[net_key]
         spec = NETWORK_SPECS[net_key]
 
+        if net.bitcoind.p2p_public:
+            rules.append((str(ports["bitcoind_p2p"]), f"{net_key} bitcoind p2p"))
         rules.append((str(ports["lnd_p2p"]), f"{net_key} lnd p2p"))
 
         for i, ix in enumerate(net.enabled_indexers()):
@@ -63,6 +65,16 @@ def render_firewall(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> st
             "ufw allow 443/tcp comment 'argus https'",
         ]
     lines.append("")
+    # The dashboard's public port. 80/443 are already handled above when SSL is
+    # on; only add a rule when it isn't already covered (e.g. a custom port, or
+    # plain HTTP on :80 with SSL off).
+    if cfg.web.enabled:
+        from .shared import web_public_port
+
+        web_port = web_public_port(cfg)
+        covered = {80, 443} if cfg.global_.ssl_enabled else set()
+        if web_port not in covered:
+            lines.append(f"ufw allow {web_port}/tcp comment 'argus dashboard'")
     for port, comment in _public_rules(cfg, port_map):
         lines.append(f"ufw allow {port}/tcp comment '{comment}'")
     lines += [

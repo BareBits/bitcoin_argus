@@ -20,10 +20,14 @@ that network.
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **mempool** | Block explorer | HTTP via shared proxy |
-| **miner** (regtest) | Produces a block every minute | — |
+| **miner** (regtest / custom-signet) | Produces a (signed, for signet) block every minute | — |
 
 A single host-level **Caddy** terminates TLS for all HTTP services across all
 networks (one certificate for the shared hostname; services differ by port).
+
+A host-level **dashboard** (`generated/web/`) serves the welcome page at the site
+root (`https://<hostname>/`) and reports live, per-service disk/RAM usage. See
+[Dashboard](#dashboard).
 
 ## How it works
 
@@ -61,12 +65,34 @@ python -m argus generate          # render enabled networks into generated/
 cd generated/regtest && docker compose up -d         # the core stack
 bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy
+cd generated/web && docker compose up -d --build       # the dashboard (builds its image)
 sudo bash generated/firewall.sh                       # open the public ports
 ```
 
 > When the set of Caddy sites/ports changes, **restart the Caddy container**
 > (`docker restart argus-caddy`) — a hot `caddy reload` won't bind new
 > host-mode listeners.
+
+## Dashboard
+
+`argus generate` also writes **`generated/web/`** — a small Flask app (served by
+gunicorn, built into its own image) that the shared Caddy fronts at the site root
+(`https://<hostname>/`). It welcomes visitors, explains the available test
+networks (with pros/cons and Bitcoin Core / Electrum attach recipes), links to
+each running service, and shows live per-service and whole-host disk/RAM usage.
+
+- **Themes** — `hacker` (default), `game`, and `bootstrap`, switchable from a
+  selector at the top of the page; the CSS files and default are set under
+  `web:` in `config.yaml`.
+- **Live metrics** — read through a **read-only `docker-socket-proxy`** sidecar
+  (the app never touches the Docker socket directly) and **cached for one hour**
+  in a SQLite DB (peewee). Host disk totals come from the host root mounted
+  read-only at `/host`.
+- **Pages** — `/` (welcome + status), `/tos` (acceptable use), `/privacy`.
+- **Config** — the `web:` block (`enabled`, `ssl`, `port`, `default_theme`,
+  `themes`, `repo_url`). Default port is the bare 443/80 root; set `web.port` to
+  serve elsewhere. The dashboard's runtime deps are the `web` extra
+  (`pip install -e ".[web]"`) / `argus/web/requirements.txt`.
 
 ## Bitcart
 
@@ -152,7 +178,13 @@ default-deny incoming policy (`ufw default deny incoming && ufw --force enable`)
 - **mutinynet** — custom 30s-block signet; explorer on by default. Requires
   `global.bitcoind_knots_image` (a `signetblocktime`-capable bitcoind — no public
   image exists, so build one from MutinyWallet/mutiny-net or Bitcoin Knots).
-- **custom-signet** — you must supply `signet_challenge`; mining is a later phase.
+- **custom-signet** — a **self-mined** custom signet, **on by default**. Argus
+  auto-generates a matched signet challenge + block-signing key into
+  `secrets/custom-signet/` (supply your own `signet_challenge` only if you run
+  your own signer) and runs a signet-miner sidecar that signs and produces blocks
+  on an interval (default 1/min), just like regtest. The miner image is built
+  from the stock bitcoind image plus the vendored Bitcoin Core signet miner (see
+  `argus/signet_miner/`); no Knots build is needed.
 
 ## Roadmap
 
@@ -164,3 +196,5 @@ default-deny incoming policy (`ufw default deny incoming && ufw --force enable`)
 - [x] Phase 6 — Bitcart (BareBits installer, own Neutrino LND → our bitcoind, behind Caddy)
 - [x] Phase 7 — all networks (testnet3/4, mutinynet, custom-signet) wired + validated
 - [x] Phase 8 — firewall script, SSL path, deploy docs
+- [x] Dashboard — welcome/status web server (themes, live per-service metrics)
+- [x] Self-mined custom signet — auto challenge/key + signet-miner sidecar

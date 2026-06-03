@@ -1,0 +1,151 @@
+/* "Bootstrap" theme — a clean, modern, light UI: system sans-serif, soft cards,
+   rounded corners, a familiar blue primary. Original work, Bootstrap-inspired. */
+
+:root {
+  --bg: #f8f9fa;
+  --card: #ffffff;
+  --fg: #212529;
+  --muted: #6c757d;
+  --primary: #0d6efd;
+  --border: #dee2e6;
+  --danger: #dc3545;
+  --success: #198754;
+  --warning-bg: #fff3cd;
+  --shadow: 0 .125rem .25rem rgba(0,0,0,.075);
+}
+
+* { box-sizing: border-box; }
+
+body.theme-bootstrap {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.75rem 1.25rem; background: var(--card);
+  border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+  position: sticky; top: 0; z-index: 5;
+}
+.brand { color: var(--fg); font-weight: 600; font-size: 1.1rem; }
+.theme-label { color: var(--muted); margin-right: 0.4rem; font-size: 0.9rem; }
+.theme-option {
+  display: inline-block; color: var(--primary); border: 1px solid var(--border);
+  border-radius: 0.375rem; padding: 0.15rem 0.6rem; margin-left: 0.3rem; font-size: 0.85rem;
+}
+.theme-option.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+.warning {
+  margin: 0; padding: 1rem 1.25rem; background: var(--warning-bg);
+  color: #664d03; border-bottom: 1px solid #ffe69c;
+}
+.warning strong { color: var(--danger); }
+.warning-policy { margin-top: 0.4rem; font-size: 0.95rem; }
+
+.container { max-width: 1040px; margin: 0 auto; padding: 1.75rem 1.25rem 3rem; }
+
+h1, h2, h3, h4 { color: var(--fg); font-weight: 600; }
+.hero h1 { font-size: 2rem; }
+.tagline { color: var(--muted); font-size: 1.05rem; }
+
+.net-section, .host-totals, .legal, .picker {
+  background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem;
+  box-shadow: var(--shadow); padding: 1.25rem 1.5rem; margin: 1.25rem 0;
+}
+.net-section.disabled { opacity: 0.6; }
+.net-head { display: flex; align-items: center; gap: 0.75rem; }
+.status {
+  font-size: 0.75rem; text-transform: uppercase; padding: 0.2rem 0.55rem;
+  border-radius: 1rem; font-weight: 600;
+}
+.status-enabled { background: var(--success); color: #fff; }
+.status-disabled { background: #e9ecef; color: var(--muted); }
+.blurb { color: var(--muted); }
+
+.proscons { display: flex; gap: 2rem; flex-wrap: wrap; }
+.proscons > div { flex: 1 1 240px; }
+.pros h4 { color: var(--success); }
+.cons h4 { color: var(--danger); }
+
+.svc-table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; }
+.svc-table th, .svc-table td { border-bottom: 1px solid var(--border); padding: 0.55rem 0.6rem; text-align: left; }
+.svc-table th { color: var(--muted); text-transform: uppercase; font-size: 0.78rem; letter-spacing: 0.03em; }
+.svc-table .num { text-align: right; white-space: nowrap; }
+.svc-table .totals td { font-weight: 600; border-top: 2px solid var(--border); }
+
+.port {
+  display: inline-block; font-size: 0.8rem; padding: 0.1rem 0.45rem; margin: 1px;
+  border-radius: 0.25rem; border: 1px solid var(--border);
+}
+.port.public { background: #e7f1ff; color: var(--primary); border-color: #b6d4fe; }
+.port.closed { background: var(--bg); color: var(--muted); }
+
+.attach { margin-top: 1rem; }
+.attach-label { font-weight: 600; color: var(--primary); }
+.cmd {
+  background: #0b1021; color: #e6edf3; border-radius: 0.5rem;
+  padding: 0.85rem 1rem; overflow-x: auto; white-space: pre; font-size: 0.85rem;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+.attach-note { color: var(--muted); font-size: 0.88rem; margin-bottom: 0.75rem; }
+
+.totals-grid { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.total-card { flex: 1 1 240px; background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; }
+.big { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
+.cache-note { color: var(--muted); font-size: 0.88rem; }
+.metrics-errors { color: var(--danger); font-size: 0.88rem; }
+
+.legal .lead { color: var(--danger); font-size: 1.3rem; font-weight: 600; }
+.legal-foot { margin-top: 1.5rem; }
+
+.footer {
+  border-top: 1px solid var(--border); background: var(--card);
+  padding: 1.25rem; text-align: center; color: var(--muted); font-size: 0.9rem;
+}
+
+/* Access model, audience badges, and the local-dev tip. */
+.access-model {
+  background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem;
+  box-shadow: var(--shadow); padding: 1.25rem 1.5rem; margin: 1.25rem 0;
+}
+.access-cols { display: flex; gap: 2rem; flex-wrap: wrap; }
+.access-cols > div { flex: 1 1 260px; }
+.access-cols h4 { color: var(--primary); margin-bottom: 0.3rem; }
+.legend { color: var(--muted); font-size: 0.9rem; }
+.local-tip {
+  background: #e7f1ff; border-left: 4px solid var(--primary); border-radius: 0.375rem;
+  padding: 0.85rem 1rem; margin: 0.85rem 0 0;
+}
+.aud {
+  display: inline-block; font-size: 0.68rem; text-transform: uppercase;
+  font-weight: 600; letter-spacing: 0.02em; padding: 0.1rem 0.45rem;
+  border-radius: 1rem; margin-left: 0.4rem; vertical-align: middle; white-space: nowrap;
+}
+.aud-v { background: #d1e7dd; color: #0f5132; }
+.aud-o { background: #fff3cd; color: #664d03; }
+
+/* Collapsible panel headers (open by default). */
+.picker > summary, .access-model > summary, .host-totals > summary, .net-section > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.6rem;
+}
+.picker > summary::-webkit-details-marker,
+.access-model > summary::-webkit-details-marker,
+.host-totals > summary::-webkit-details-marker,
+.net-section > summary::-webkit-details-marker { display: none; }
+.picker > summary > h2, .access-model > summary > h2, .host-totals > summary > h2 { flex: 1; margin: 0; }
+.caret {
+  flex: 0 0 auto; width: 0; height: 0;
+  border-left: 8px solid var(--muted);
+  border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  transition: transform 0.15s ease;
+}
+details[open] > summary > .caret { transform: rotate(90deg); }
+.picker > summary:hover .caret, .net-section > summary:hover .caret,
+.access-model > summary:hover .caret, .host-totals > summary:hover .caret { border-left-color: var(--primary); }

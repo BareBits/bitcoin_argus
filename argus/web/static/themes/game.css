@@ -1,0 +1,143 @@
+/* "Game" theme — an 8-bit home-console look: chunky black outlines, hard pixel
+   shadows, a bright primary palette, and blocky type. Original work. */
+
+:root {
+  --sky: #5c94fc;     /* classic side-scroller sky */
+  --ink: #0b0b0b;
+  --paper: #fdf6e3;
+  --red: #e23b2e;
+  --blue: #2038ec;
+  --green: #1e9e3a;
+  --gold: #fbd000;
+}
+
+* { box-sizing: border-box; }
+
+body.theme-game {
+  margin: 0;
+  background: var(--sky);
+  color: var(--ink);
+  font-family: "DejaVu Sans Mono", "Courier New", monospace;
+  font-weight: bold;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0.5px;
+  image-rendering: pixelated;
+}
+
+/* The signature blocky panel: thick ink border + hard offset shadow. */
+.panel, .net-section, .host-totals, .legal, .picker, .total-card, .cmd, .svc-table {
+  border: 4px solid var(--ink);
+  box-shadow: 6px 6px 0 var(--ink);
+  background: var(--paper);
+}
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { color: var(--red); text-decoration: underline; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.7rem 1rem; background: var(--ink); color: var(--gold);
+  border-bottom: 4px solid var(--gold);
+}
+.brand { color: var(--gold); text-transform: uppercase; }
+.theme-label { color: #fff; text-transform: uppercase; margin-right: 0.4rem; }
+.theme-option {
+  display: inline-block; color: var(--ink); background: #fff;
+  border: 3px solid var(--ink); padding: 0.1rem 0.5rem; margin-left: 0.3rem;
+  text-transform: uppercase; font-size: 0.8rem;
+}
+.theme-option.active { background: var(--gold); }
+
+.warning {
+  margin: 0; padding: 1rem; background: var(--red); color: #fff;
+  border-bottom: 6px solid var(--ink); text-transform: uppercase;
+}
+.warning strong { color: var(--gold); }
+.warning-policy { margin-top: 0.4rem; text-transform: none; }
+.warning-policy a { color: #fff; text-decoration: underline; }
+
+.container { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+
+h1, h2, h3, h4 { text-transform: uppercase; color: var(--ink); }
+.hero h1 { color: var(--blue); text-shadow: 3px 3px 0 var(--gold); }
+.tagline { background: #fff; border: 4px solid var(--ink); padding: 0.8rem; box-shadow: 6px 6px 0 var(--ink); }
+
+.net-section, .host-totals, .legal, .picker { padding: 1rem 1.2rem; margin: 1.6rem 0; }
+.net-section.disabled { filter: grayscale(1); opacity: 0.7; }
+.net-head { display: flex; align-items: center; gap: 0.8rem; }
+.status { border: 3px solid var(--ink); padding: 0.1rem 0.5rem; text-transform: uppercase; font-size: 0.75rem; }
+.status-enabled { background: var(--green); color: #fff; }
+.status-disabled { background: #bbb; color: var(--ink); }
+
+.proscons { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.proscons > div { flex: 1 1 240px; }
+.pros h4 { color: var(--green); }
+.cons h4 { color: var(--red); }
+
+.svc-table { width: 100%; border-collapse: separate; border-spacing: 0; margin: 1.2rem 0; }
+.svc-table th, .svc-table td { border-bottom: 3px solid var(--ink); padding: 0.4rem 0.6rem; text-align: left; }
+.svc-table th { background: var(--blue); color: #fff; text-transform: uppercase; }
+.svc-table .num { text-align: right; white-space: nowrap; }
+.svc-table .totals td { background: var(--gold); }
+
+.port { display: inline-block; border: 2px solid var(--ink); padding: 0 0.3rem; margin: 1px; background: #fff; }
+.port.public { background: var(--gold); }
+.port.closed { background: #ddd; }
+
+.attach { margin-top: 1rem; }
+.attach-label { color: var(--blue); text-transform: uppercase; }
+.cmd { padding: 0.7rem; overflow-x: auto; white-space: pre; background: var(--ink); color: var(--gold); box-shadow: 6px 6px 0 rgba(0,0,0,0.3); }
+.attach-note { font-size: 0.85rem; margin-bottom: 0.6rem; }
+
+.totals-grid { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.total-card { flex: 1 1 240px; padding: 0.8rem; margin-top: 0.5rem; }
+.big { font-size: 1.5rem; color: var(--red); }
+.cache-note { font-size: 0.85rem; }
+.metrics-errors { color: var(--red); font-size: 0.85rem; }
+
+.legal .lead { color: var(--red); font-size: 1.3rem; }
+.legal-foot { margin-top: 1.5rem; }
+
+.footer { padding: 1rem; text-align: center; background: var(--ink); color: #fff; font-size: 0.85rem; border-top: 4px solid var(--gold); }
+.footer strong { color: var(--gold); }
+.footer a { color: var(--gold); }
+
+/* Access model, audience badges, and the local-dev tip. */
+.access-model {
+  border: 4px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); background: var(--paper);
+  padding: 1rem 1.2rem; margin: 1.6rem 0;
+}
+.access-model h2 { color: var(--blue); }
+.access-cols { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.access-cols > div { flex: 1 1 260px; }
+.access-cols h4 { color: var(--green); }
+.legend { font-size: 0.9rem; }
+.local-tip {
+  background: var(--gold); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--ink);
+  padding: 0.7rem 1rem; margin: 0.8rem 0 0;
+}
+.aud {
+  display: inline-block; font-size: 0.66rem; text-transform: uppercase;
+  padding: 0.05rem 0.4rem; margin-left: 0.3rem; vertical-align: middle;
+  border: 2px solid var(--ink); white-space: nowrap; font-weight: bold;
+}
+.aud-v { background: var(--green); color: #fff; }
+.aud-o { background: var(--gold); color: var(--ink); }
+
+/* Collapsible panel headers (open by default). */
+.picker > summary, .access-model > summary, .host-totals > summary, .net-section > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.6rem;
+}
+.picker > summary::-webkit-details-marker,
+.access-model > summary::-webkit-details-marker,
+.host-totals > summary::-webkit-details-marker,
+.net-section > summary::-webkit-details-marker { display: none; }
+.picker > summary > h2, .access-model > summary > h2, .host-totals > summary > h2 { flex: 1; margin: 0; }
+.caret {
+  flex: 0 0 auto; width: 0; height: 0;
+  border-left: 9px solid var(--ink);
+  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+  transition: transform 0.15s ease;
+}
+details[open] > summary > .caret { transform: rotate(90deg); }
