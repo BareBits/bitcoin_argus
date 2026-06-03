@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .constants import NETWORK_SPECS, NetworkSpec
 
@@ -25,6 +32,9 @@ class ConfigError(Exception):
 
 # Hostname per RFC 1123 (labels of a-z, 0-9, hyphen; not leading/trailing hyphen).
 _HOSTNAME_LABEL = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
+
+# Networks whose block production Argus can drive itself.
+_MINEABLE_NETWORKS = {"regtest", "custom-signet"}
 
 
 def _is_valid_host(value: str) -> bool:
@@ -82,6 +92,10 @@ class GlobalConfig(_Base):
     mempool_backend_image: str = "mempool/backend:v3.3.1"
     mempool_frontend_image: str = "mempool/frontend:v3.3.1"
     mariadb_image: str = "mariadb:10.5.21"
+    # The dashboard image is built from this repo; these pin the build base and
+    # the read-only Docker-API proxy the dashboard reads live metrics through.
+    web_python_image: str = "python:3.12-slim"
+    socket_proxy_image: str = "tecnativa/docker-socket-proxy:0.3.0"
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
 
     @field_validator("hostname")
@@ -94,6 +108,11 @@ class GlobalConfig(_Base):
 
 class BitcoindCfg(_Base):
     extra_args: list[str] = Field(default_factory=list)
+    # Publish the node's P2P port to the internet (and open it in the firewall) so
+    # peers can connect their own node to this chain. Default on. Set false to bind
+    # it to the host loopback only (operator-only) — e.g. to stop strangers from
+    # connecting to / reorging a trivial-difficulty regtest chain.
+    p2p_public: bool = True
 
 
 class LndCfg(_Base):
@@ -229,9 +248,54 @@ class NetworkCfg(_Base):
         return self.mempool.enabled
 
 
+class WebCfg(_Base):
+    """The Argus dashboard: a host-global web server fronted by the shared Caddy.
+
+    It serves the welcome/landing page and the testnet/ToS/privacy pages, and
+    reports live per-service resource usage. Unlike the per-network services it
+    spans every enabled network at once (like the shared Caddy layer).
+    """
+
+    enabled: bool = True
+    ssl: bool = True
+    # None => the bare hostname root (443 with ssl, 80 without). Override to serve
+    # the dashboard on a dedicated public port instead of the site root.
+    port: int | None = None
+    default_theme: str = "hacker"
+    # theme name -> CSS path served under the app's /static/ root.
+    themes: dict[str, str] = Field(
+        default_factory=lambda: {
+            "hacker": "themes/hacker.css",
+            "game": "themes/game.css",
+            "bootstrap": "themes/bootstrap.css",
+        }
+    )
+    # Footer "run your own testnet install" link.
+    repo_url: str = "https://github.com/BareBits/bitcoin_argus"
+
+    @field_validator("port")
+    @classmethod
+    def _check_port(cls, v: int | None) -> int | None:
+        if v is not None and not (1 <= v <= 65535):
+            raise ValueError(f"web.port {v} out of range 1-65535")
+        return v
+
+    @model_validator(mode="after")
+    def _check_default_theme(self) -> "WebCfg":
+        if not self.themes:
+            raise ValueError("web.themes must define at least one theme")
+        if self.default_theme not in self.themes:
+            raise ValueError(
+                f"web.default_theme {self.default_theme!r} is not one of the "
+                f"defined themes ({sorted(self.themes)})"
+            )
+        return self
+
+
 class ArgusConfig(_Base):
     global_: GlobalConfig = Field(alias="global")
     networks: dict[str, NetworkCfg]
+    web: WebCfg = Field(default_factory=WebCfg)
 
     def enabled_networks(self) -> list[tuple[str, NetworkCfg]]:
         """(key, cfg) pairs for enabled networks, in canonical order."""
@@ -258,12 +322,9 @@ class ArgusConfig(_Base):
         for key, net in self.enabled_networks():
             spec = NETWORK_SPECS[key]
 
-            # signet challenge requirements
-            challenge = net.signet_challenge or spec.default_signet_challenge
-            if spec.requires_challenge and not challenge:
-                errors.append(
-                    f"[{key}] is a custom signet and requires 'signet_challenge'"
-                )
+            # A custom signet needs a challenge; if the operator doesn't supply
+            # one, Argus auto-generates a matched challenge + signing key into the
+            # secret store, so no error is required here.
 
             # Networks needing 30s-block signet support need a special bitcoind.
             if spec.needs_knots and not self.global_.bitcoind_knots_image:
@@ -289,11 +350,10 @@ class ArgusConfig(_Base):
 
             # Where mining isn't supported (testnet3/4, public signet, mutinynet)
             # the miner flag is simply a no-op (the registry won't include it).
-            # custom-signet IS mineable in principle, but signet mining isn't
-            # implemented yet — surface that clearly if someone enables it.
-            if net.miner.enabled and spec.supports_miner and key != "regtest":
+            # regtest and custom-signet are the chains Argus can drive.
+            if net.miner.enabled and spec.supports_miner and key not in _MINEABLE_NETWORKS:
                 errors.append(
-                    f"[{key}] automated mining is only implemented for regtest so far"
+                    f"[{key}] automated mining is not implemented for this network"
                 )
 
             # Bitcart requires an admin email; an active liquidity helper needs

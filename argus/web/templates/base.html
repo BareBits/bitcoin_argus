@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ current_theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Bitcoin Argus{% endblock %}</title>
+  <link rel="stylesheet" href="{{ theme_css }}">
+</head>
+<body class="theme-{{ current_theme }}">
+  <header class="topbar">
+    <a class="brand" href="/">▚ Bitcoin&nbsp;Argus</a>
+    <nav class="theme-selector" aria-label="Theme selector">
+      <span class="theme-label">theme:</span>
+      {% for t in theme_links %}
+        <a class="theme-option{% if t.active %} active{% endif %}"
+           href="{{ t.url }}">{{ t.name }}</a>
+      {% endfor %}
+    </nav>
+  </header>
+
+  <div class="warning" role="alert">{{ warning_html|safe }}
+    <div class="warning-policy">
+      By using these services you agree to our
+      <a href="/tos">Acceptable Use Policy</a> and
+      <a href="/privacy">Privacy Policy</a>.
+    </div>
+  </div>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% include "footer.html" %}
+</body>
+</html>

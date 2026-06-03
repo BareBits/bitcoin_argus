@@ -1,0 +1,207 @@
+/* "Hacker" theme — a retro intrusion-console look: deep navy-black with glowing
+   blue panels, centered gradient title bars, solid blue buttons, and crisp
+   white/blue sans-serif text. Original work. */
+
+:root {
+  --bg: #02030c;
+  --panel-top: #0a1538;
+  --panel-bottom: #03050f;
+  --line: #2746b8;
+  --line-bright: #5a86ff;
+  --fg: #cdd9ff;
+  --fg-bright: #ffffff;
+  --accent: #6ea0ff;
+  --btn-a: #2a4fd0;
+  --btn-b: #1b3082;
+  --danger: #ff5470;
+  --ok: #49e0a0;
+}
+
+* { box-sizing: border-box; }
+
+body.theme-hacker {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 70% -10%, rgba(40, 80, 200, 0.25), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(20, 50, 160, 0.18), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--fg);
+  font-family: Tahoma, Verdana, "DejaVu Sans", "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: #a9c6ff; text-decoration: underline; }
+
+/* The signature element: a centered title on a blue bar that is brightest in
+   the middle and fades to dark navy at the edges. */
+.bar, .net-head, .svc-table thead tr, .picker > summary, .host-totals > summary,
+.access-model > summary,
+.attach-label, .pros h4, .cons h4, .total-card h4 {
+  background: linear-gradient(90deg, #061235 0%, #3f6cff 50%, #061235 100%);
+  color: var(--fg-bright);
+  text-align: center;
+  text-shadow: 0 0 6px rgba(120, 160, 255, 0.6);
+}
+
+/* Top intrusion bar: dark with a bright underline, like the console chrome. */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.55rem 1rem;
+  background: linear-gradient(180deg, #0a1640, #050a1f);
+  border-bottom: 2px solid var(--line-bright);
+  box-shadow: 0 0 14px rgba(60, 110, 255, 0.45);
+  position: sticky; top: 0; z-index: 5;
+}
+.brand { color: var(--fg-bright); font-weight: bold; letter-spacing: 2px; text-shadow: 0 0 8px rgba(120,160,255,0.7); }
+.theme-selector { font-size: 0.85rem; }
+.theme-label { color: var(--accent); margin-right: 0.4rem; text-transform: uppercase; letter-spacing: 1px; }
+.theme-option {
+  display: inline-block; color: #dbe6ff;
+  background: linear-gradient(180deg, var(--btn-a), var(--btn-b));
+  border: 1px solid var(--line-bright); border-radius: 2px;
+  padding: 0.15rem 0.6rem; margin-left: 0.3rem; text-transform: uppercase; font-size: 0.78rem;
+}
+.theme-option:hover { text-decoration: none; filter: brightness(1.25); }
+.theme-option.active { background: #6f9bff; color: #02030c; border-color: #cfdcff; font-weight: bold; }
+
+.warning {
+  margin: 0; padding: 0.9rem 1rem;
+  background: linear-gradient(180deg, #2a0512, #160109);
+  color: #ffd6de; border-top: 1px solid #3a0a18; border-bottom: 2px solid var(--danger);
+}
+.warning strong { color: var(--danger); text-shadow: 0 0 6px rgba(255,84,112,0.6); }
+.warning-policy { margin-top: 0.4rem; font-size: 0.9rem; }
+.warning-policy a { color: #ffb3c0; }
+
+.container { max-width: 1040px; margin: 0 auto; padding: 1.75rem 1rem 3rem; }
+
+h1, h2, h3, h4 { color: var(--fg-bright); }
+.hero h1 { font-size: 2rem; font-weight: 600; letter-spacing: 1px; text-shadow: 0 0 12px rgba(90,134,255,0.55); }
+.tagline { color: var(--fg); }
+
+/* Glowing bordered panels with a dark blue interior gradient. */
+.net-section, .host-totals, .legal, .picker {
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+  border: 1px solid var(--line);
+  box-shadow: 0 0 16px rgba(40, 80, 200, 0.25), inset 0 0 30px rgba(20, 50, 150, 0.18);
+  padding: 0; margin: 1.4rem 0;
+}
+.net-section > *:not(.net-head), .host-totals > *:not(summary),
+.legal > *, .picker > *:not(summary) { padding-left: 1.3rem; padding-right: 1.3rem; }
+.legal { padding: 1.2rem 0; }
+.net-section.disabled { opacity: 0.5; }
+
+/* Network panel title bar with a status lamp on the right. */
+.net-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.45rem 1rem; margin: 0;
+}
+.net-head h2 { margin: 0; flex: 1; text-align: center; font-size: 1.1rem; letter-spacing: 1px; }
+.status {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px;
+  padding: 0.12rem 0.5rem; border-radius: 2px; background: #02030c;
+}
+.status-enabled { color: var(--ok); border: 1px solid var(--ok); text-shadow: 0 0 6px rgba(73,224,160,0.6); }
+.status-disabled { color: #8aa0d8; border: 1px solid #33457e; }
+.blurb { color: var(--fg); padding-top: 0.8rem; }
+
+.picker > summary, .host-totals > summary { padding: 0.45rem 1rem; margin: 0 0 0.8rem; font-size: 1.05rem; letter-spacing: 1px; }
+
+.proscons { display: flex; gap: 1.5rem; flex-wrap: wrap; padding-bottom: 0.6rem; }
+.proscons > div { flex: 1 1 240px; }
+.pros h4, .cons h4 { padding: 0.25rem 0.5rem; border-radius: 2px; font-size: 0.85rem; letter-spacing: 1px; }
+.proscons ul { margin: 0.4rem 0; padding-left: 1.1rem; }
+
+.svc-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+.svc-table thead tr { text-shadow: 0 0 6px rgba(120,160,255,0.6); }
+.svc-table th { padding: 0.4rem 0.6rem; text-align: center; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 1px; background: transparent; color: var(--fg-bright); }
+.svc-table td { border-bottom: 1px solid rgba(60, 100, 220, 0.25); padding: 0.45rem 0.6rem; }
+.svc-table tbody tr:hover td { background: rgba(40, 80, 200, 0.12); }
+.svc-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.svc-table .totals td { font-weight: bold; color: var(--accent); border-top: 1px solid var(--line-bright); background: rgba(20, 45, 130, 0.35); }
+
+.port { display: inline-block; padding: 0.05rem 0.4rem; margin: 1px; border-radius: 2px; font-size: 0.85rem; }
+.port.public { color: #dbe6ff; background: linear-gradient(180deg, var(--btn-a), var(--btn-b)); border: 1px solid var(--line-bright); }
+.port.closed { color: #8aa0d8; border: 1px solid #2a3c70; }
+
+.attach { padding-bottom: 1rem; }
+.attach-label { display: inline-block; padding: 0.2rem 0.6rem; margin: 0.8rem 0 0.4rem; border-radius: 2px; font-size: 0.8rem; letter-spacing: 1px; }
+.cmd {
+  background: #010410; border: 1px solid var(--line); color: #bfe0ff;
+  padding: 0.7rem 0.9rem; overflow-x: auto; white-space: pre;
+  font-family: "DejaVu Sans Mono", Consolas, monospace; font-size: 0.85rem;
+  box-shadow: inset 0 0 18px rgba(20, 50, 150, 0.3);
+}
+.attach-note { color: #93a6d8; font-size: 0.85rem; margin: 0.4rem 0 0.6rem; }
+
+.totals-grid { display: flex; gap: 1.5rem; flex-wrap: wrap; padding-bottom: 1rem; }
+.total-card { flex: 1 1 240px; border: 1px solid var(--line); background: linear-gradient(180deg, #08102e, #03050f); }
+.total-card h4 { padding: 0.3rem 0.6rem; margin: 0 0 0.6rem; font-size: 0.85rem; letter-spacing: 1px; }
+.total-card p { padding: 0 0.8rem 0.7rem; margin: 0; }
+.big { font-size: 1.5rem; color: var(--fg-bright); text-shadow: 0 0 10px rgba(90,134,255,0.6); }
+.cache-note { color: #7e93cc; font-size: 0.85rem; }
+.metrics-errors { color: var(--danger); font-size: 0.85rem; margin-top: 0.5rem; }
+
+.legal h1, .legal h2 { color: var(--fg-bright); }
+.legal .lead { color: var(--danger); font-size: 1.3rem; text-shadow: 0 0 8px rgba(255,84,112,0.5); }
+.legal-foot { margin-top: 1.5rem; }
+
+.footer {
+  border-top: 2px solid var(--line-bright); background: linear-gradient(180deg, #0a1640, #050a1f);
+  box-shadow: 0 0 14px rgba(60,110,255,0.4);
+  padding: 1rem; text-align: center; color: #9fb4e8; font-size: 0.85rem;
+}
+.footer strong { color: var(--fg-bright); }
+.footer a { color: var(--accent); }
+
+/* Access model, audience badges, and the local-dev tip. */
+.access-model {
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+  border: 1px solid var(--line);
+  box-shadow: 0 0 16px rgba(40, 80, 200, 0.25), inset 0 0 30px rgba(20, 50, 150, 0.18);
+  margin: 1.4rem 0; padding: 0 0 1rem;
+}
+.access-model > summary {
+  padding: 0.45rem 1rem; margin: 0 0 0.8rem; font-size: 1.05rem; letter-spacing: 1px;
+}
+.access-model > p, .access-model .access-cols, .access-model .legend { padding: 0 1.3rem; }
+
+/* Collapsible panel headers (open by default). The title bar IS the summary, so
+   the disclosure caret sits on the bar; the inner <h2> is just centered text. */
+.picker > summary, .access-model > summary, .host-totals > summary, .net-section > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.55rem;
+}
+.picker > summary::-webkit-details-marker,
+.access-model > summary::-webkit-details-marker,
+.host-totals > summary::-webkit-details-marker,
+.net-section > summary::-webkit-details-marker { display: none; }
+.picker > summary > h2, .access-model > summary > h2, .host-totals > summary > h2 {
+  flex: 1; margin: 0; text-align: center; color: inherit; background: none;
+  text-shadow: none; font-size: inherit; letter-spacing: inherit;
+}
+.caret {
+  flex: 0 0 auto; width: 0; height: 0;
+  border-left: 8px solid currentColor;
+  border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  transition: transform 0.15s ease; opacity: 0.9;
+}
+details[open] > summary > .caret { transform: rotate(90deg); }
+.access-cols { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.access-cols > div { flex: 1 1 260px; }
+.access-cols h4 { color: var(--accent); margin: 0.5rem 0 0.3rem; }
+.legend { color: #9fb4e8; font-size: 0.9rem; }
+.picker .local-tip {
+  background: rgba(40, 80, 200, 0.14); border-left: 3px solid var(--line-bright);
+  padding: 0.7rem 1rem; margin: 0.8rem 0 0;
+}
+.aud {
+  display: inline-block; font-size: 0.66rem; text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 0.05rem 0.4rem; border-radius: 2px;
+  margin-left: 0.3rem; vertical-align: middle; white-space: nowrap; text-shadow: none;
+}
+.aud-v { color: var(--ok); border: 1px solid var(--ok); background: rgba(73, 224, 160, 0.08); }
+.aud-o { color: #ffb454; border: 1px solid #ffb454; background: rgba(255, 180, 84, 0.08); }
+.attach-operator { opacity: 0.92; }

@@ -12,6 +12,8 @@ import secrets as _secrets
 from pathlib import Path
 from typing import Callable
 
+from .signetkey import generate_signet_key
+
 # name -> generator(net_key). token_hex(32) yields 64 shell-safe hex chars.
 _REQUIRED: dict[str, Callable[[str], str]] = {
     "RPC_USER": lambda net: f"argus_{net.replace('-', '_')}",
@@ -38,8 +40,15 @@ def _parse_env(text: str) -> dict[str, str]:
     return out
 
 
-def load_or_create(net_key: str, secrets_root: Path) -> dict[str, str]:
-    """Return this network's secrets, creating/persisting any missing keys."""
+def load_or_create(
+    net_key: str, secrets_root: Path, *, signet_key: bool = False
+) -> dict[str, str]:
+    """Return this network's secrets, creating/persisting any missing keys.
+
+    When ``signet_key`` is set (a self-mined custom signet with no operator-supplied
+    challenge), a matched signet challenge + block-signing WIF are generated once
+    and persisted alongside the other secrets.
+    """
     net_dir = secrets_root / net_key
     env_path = net_dir / "secrets.env"
 
@@ -50,6 +59,14 @@ def load_or_create(net_key: str, secrets_root: Path) -> dict[str, str]:
         if not values.get(key):
             values[key] = gen(net_key)
             changed = True
+
+    # Signet challenge + signing key are generated as a pair, so only create them
+    # together when neither is present yet.
+    if signet_key and not (values.get("SIGNET_CHALLENGE") and values.get("SIGNET_MINER_WIF")):
+        wif, _pubkey, challenge = generate_signet_key()
+        values["SIGNET_CHALLENGE"] = challenge
+        values["SIGNET_MINER_WIF"] = wif
+        changed = True
 
     if changed:
         net_dir.mkdir(parents=True, exist_ok=True)

@@ -71,9 +71,10 @@ NETWORK_SPECS: dict[str, NetworkSpec] = {
         True,
         False,
     ),
-    # Operator-defined signet: challenge is mandatory; we can mine it ourselves.
+    # Operator-defined signet: challenge is auto-generated and we mine it
+    # ourselves with the signet miner. Stock bitcoind suffices (no Knots needed).
     "custom-signet": NetworkSpec(
-        "custom-signet", "signet", True, True, None, (), None, True, True, True
+        "custom-signet", "signet", True, True, None, (), None, False, True, True
     ),
 }
 
@@ -108,6 +109,11 @@ LND_NETWORK_KEY: dict[str, str] = {
 
 NETWORK_BLOCK_BASE = 30000  # regtest=30000, testnet3=31000, ...
 NETWORK_BLOCK_SIZE = 1000  # large block per network to allow expansion
+
+# The dashboard (gunicorn) listens here on the host loopback; the shared Caddy
+# reverse-proxies to it. Deliberately below NETWORK_BLOCK_BASE so it never
+# collides with a per-network port block.
+WEB_BACKEND_PORT = 29080
 
 # Offsets within a network's 1000-port block. Fulcrum instances are computed
 # separately (they are a variable-length list).
