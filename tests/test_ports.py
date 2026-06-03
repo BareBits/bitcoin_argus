@@ -19,6 +19,9 @@ def test_default_offsets():
     p = allocate(cfg)["regtest"]
     assert p["bitcoind_rpc"] == 30001
     assert p["lnd_p2p"] == 30010
+    assert p["lnd2_p2p"] == 30013
+    assert p["lnd2_rest"] == 30014
+    assert p["lnd2_grpc"] == 30015
     assert p["fulcrum_0_electrum_tcp"] == 30040
     assert p["cashu_public"] == 30100
     assert p["mempool_public"] == 30300

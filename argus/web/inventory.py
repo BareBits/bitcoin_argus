@@ -98,25 +98,38 @@ def _service_rows(
     if net.miner.enabled and spec.supports_miner:
         rows.append(row("Signet miner" if spec.is_signet else "Regtest miner", "miner"))
 
-    # Standalone LND (used by Cashu). When mempool is up and we know the node's
-    # pubkey, link the LND row to its page on the explorer's Lightning section.
-    pubkey = (metrics.get("lnd") or {}).get(net_key)
-    lnd_links: list[LinkRef] = []
-    if pubkey and net.mempool_enabled(spec):
-        base = _url(cfg, net.mempool.ssl, ports["mempool_public"])
-        lnd_links.append(LinkRef("Node on mempool", f"{base}lightning/node/{pubkey}"))
-    rows.append(
-        row(
-            "LND (Lightning)",
-            "lnd",
-            ports=[
-                PortRef("P2P", ports["lnd_p2p"], public=True),
-                PortRef("REST", ports["lnd_rest"], public=False),
-                PortRef("gRPC", ports["lnd_grpc"], public=False),
-            ],
-            links=lnd_links,
+    # Standalone LND node(s). On mined networks a second node ("argus2") is added
+    # and the two are auto-wired with channels. When mempool is up and we know a
+    # node's pubkey, link its row to its page on the explorer's Lightning section.
+    def lnd_row(bucket: str, label: str, p2p: str, rest: str, grpc: str, pk) -> None:
+        links: list[LinkRef] = []
+        if pk and net.mempool_enabled(spec):
+            base = _url(cfg, net.mempool.ssl, ports["mempool_public"])
+            links.append(LinkRef("Node on mempool", f"{base}lightning/node/{pk}"))
+        rows.append(
+            row(
+                label,
+                bucket,
+                ports=[
+                    PortRef("P2P", ports[p2p], public=True),
+                    PortRef("REST", ports[rest], public=False),
+                    PortRef("gRPC", ports[grpc], public=False),
+                ],
+                links=links,
+            )
         )
+
+    name1 = net.lnd.name or ("argus1" if spec.supports_miner else f"argus-{net_key}")
+    lnd_row(
+        "lnd", f"LND ({name1})", "lnd_p2p", "lnd_rest", "lnd_grpc",
+        (metrics.get("lnd") or {}).get(net_key),
     )
+    if net.lnd_secondary_enabled(spec):
+        lnd_row(
+            "lnd2", f"LND ({net.lnd.secondary.name})",
+            "lnd2_p2p", "lnd2_rest", "lnd2_grpc",
+            (metrics.get("lnd2") or {}).get(net_key),
+        )
 
     # Fulcrum indexers (Electrum servers).
     for i, ix in enumerate(net.enabled_indexers()):
@@ -200,13 +213,27 @@ def build_sections(
             section.services = _service_rows(cfg, net_key, ports, metrics)
             section.ram_total = sum(s.ram or 0 for s in section.services)
             section.disk_total = sum(s.disk or 0 for s in section.services)
-            section.attach = attach_commands(net_key, cfg.global_.hostname, ports)
-            # Prepend the LND connection URI when the node's pubkey is known.
-            pubkey = (metrics.get("lnd") or {}).get(net_key)
-            if pubkey:
-                uri = f"{pubkey}@{cfg.global_.hostname}:{ports['lnd_p2p']}"
+            section.attach = attach_commands(
+                net_key, cfg.global_.hostname, ports, net.bitcoind.p2p_public
+            )
+            # Prepend the LND connection URI(s) when the node pubkey(s) are known.
+            # Insert node2 first then node1 so argus1 ends up at the very top.
+            spec = NETWORK_SPECS[net_key]
+            uris: list[tuple[str, str, int]] = []
+            pk1 = (metrics.get("lnd") or {}).get(net_key)
+            if pk1:
+                name1 = net.lnd.name or (
+                    "argus1" if spec.supports_miner else f"argus-{net_key}"
+                )
+                uris.append((name1, pk1, ports["lnd_p2p"]))
+            if net.lnd_secondary_enabled(spec):
+                pk2 = (metrics.get("lnd2") or {}).get(net_key)
+                if pk2:
+                    uris.append((net.lnd.secondary.name, pk2, ports["lnd2_p2p"]))
+            for label, pk, p2p in reversed(uris):
+                uri = f"{pk}@{cfg.global_.hostname}:{p2p}"
                 section.attach.insert(0, AttachCommand(
-                    label="Lightning node (LND) — connect / open a channel",
+                    label=f"Lightning node {label} (LND) — connect / open a channel",
                     command=f"lncli connect {uri}",
                     note="The node's public connection URI is pubkey@host:port.",
                     audience="visitor",

@@ -135,6 +135,77 @@ def test_miner_on_non_mineable_network_is_noop():
     assert cfg.networks["mutinynet"].miner.enabled
 
 
+def test_secondary_and_channels_default_on_for_mined_nets():
+    from argus.constants import NETWORK_SPECS
+
+    cfg = validated(make({
+        "regtest": {"enabled": True, "bitcart": BITCART_OFF},
+        "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+        "signet": {"enabled": True, "bitcart": BITCART_OFF},
+    }))
+    for key in ("regtest", "custom-signet"):
+        net, spec = cfg.networks[key], NETWORK_SPECS[key]
+        assert net.lnd_secondary_enabled(spec)
+        assert net.lnd_channels_enabled(spec)
+        assert net.lnd_wumbo_enabled(spec)  # 10 BTC channels force wumbo on
+    # Public signet: not a network Argus mines => feature off.
+    net, spec = cfg.networks["signet"], NETWORK_SPECS["signet"]
+    assert not net.lnd_secondary_enabled(spec)
+    assert not net.lnd_channels_enabled(spec)
+
+
+def test_disabling_miner_opts_out_without_error():
+    from argus.constants import NETWORK_SPECS
+
+    # No miner => the auto feature defaults off (no validation error).
+    cfg = validated(make({"regtest": {
+        "enabled": True, "miner": {"enabled": False}, "bitcart": BITCART_OFF}}))
+    net, spec = cfg.networks["regtest"], NETWORK_SPECS["regtest"]
+    assert not net.lnd_secondary_enabled(spec)
+    assert not net.lnd_channels_enabled(spec)
+
+
+def test_secondary_rejected_on_non_mined_net():
+    with pytest.raises(ConfigError, match="only supported on networks Argus mines"):
+        validated(make({"signet": {
+            "enabled": True, "bitcart": BITCART_OFF,
+            "lnd": {"secondary": {"enabled": True}}}}))
+
+
+def test_channels_require_secondary():
+    with pytest.raises(ConfigError, match="requires lnd.secondary"):
+        validated(make({"regtest": {
+            "enabled": True, "bitcart": BITCART_OFF,
+            "lnd": {"secondary": {"enabled": False}, "channels": {"enabled": True}}}}))
+
+
+def test_explicit_channels_require_miner():
+    with pytest.raises(ConfigError, match="requires the miner"):
+        validated(make({"regtest": {
+            "enabled": True, "bitcart": BITCART_OFF, "miner": {"enabled": False},
+            "lnd": {"channels": {"enabled": True}}}}))
+
+
+def test_channel_btc_cannot_exceed_fund_btc():
+    with pytest.raises(ConfigError, match="channel_btc"):
+        validated(make({"regtest": {
+            "enabled": True, "bitcart": BITCART_OFF,
+            "lnd": {"channels": {"fund_btc": 5, "channel_btc": 10}}}}))
+
+
+@pytest.mark.parametrize("bad", ["blue", "#ggg", "#12345", "123456"])
+def test_bad_lnd_color_rejected(bad):
+    with pytest.raises(Exception):
+        validated(make({"regtest": {
+            "enabled": True, "bitcart": BITCART_OFF, "lnd": {"color": bad}}}))
+
+
+def test_lnd_alias_over_32_bytes_rejected():
+    with pytest.raises(Exception):
+        validated(make({"regtest": {
+            "enabled": True, "bitcart": BITCART_OFF, "lnd": {"name": "x" * 33}}}))
+
+
 def test_load_config_missing_file(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.yaml")

@@ -30,6 +30,8 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
         if net.bitcoind.p2p_public:
             rules.append((str(ports["bitcoind_p2p"]), f"{net_key} bitcoind p2p"))
         rules.append((str(ports["lnd_p2p"]), f"{net_key} lnd p2p"))
+        if net.lnd_secondary_enabled(spec):
+            rules.append((str(ports["lnd2_p2p"]), f"{net_key} lnd2 p2p"))
 
         for i, ix in enumerate(net.enabled_indexers()):
             rules.append(

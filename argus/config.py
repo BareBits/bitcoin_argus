@@ -115,10 +115,83 @@ class BitcoindCfg(_Base):
     p2p_public: bool = True
 
 
+def _check_alias(v: str) -> str:
+    """Validate an LND alias: <=32 bytes (BOLT #7 limit), no control chars."""
+    if "\n" in v or "\r" in v:
+        raise ValueError("lnd alias must not contain newlines")
+    if len(v.encode("utf-8")) > 32:
+        raise ValueError(f"lnd alias {v!r} exceeds 32 bytes (Lightning gossip limit)")
+    return v
+
+
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _check_color(v: str) -> str:
+    if not _COLOR_RE.match(v):
+        raise ValueError(f"lnd color {v!r} must be a hex color like #rrggbb")
+    return v
+
+
+class LndSecondaryCfg(_Base):
+    """A second LND node on the same network (for inter-node channels).
+
+    Only valid on networks Argus mines (regtest/custom-signet). ``enabled`` is
+    tri-state: None => on for those networks, off elsewhere.
+    """
+
+    enabled: bool | None = None
+    name: str = "argus2"  # gossip alias (<=32 bytes)
+    color: str = "#ff9900"
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return _check_alias(v)
+
+    @field_validator("color")
+    @classmethod
+    def _check_col(cls, v: str) -> str:
+        return _check_color(v)
+
+
+class LndChannelsCfg(_Base):
+    """Auto-fund both LND nodes and open channels between them at startup.
+
+    Only valid on networks Argus mines. ``enabled`` is tri-state (None => on for
+    those networks). Each node is funded with ``fund_btc`` on-chain and opens one
+    channel of ``channel_btc`` to the other (two channels total).
+    """
+
+    enabled: bool | None = None
+    fund_btc: float = Field(default=25.0, gt=0)
+    channel_btc: float = Field(default=10.0, gt=0)
+
+
 class LndCfg(_Base):
+    # Node naming/branding. ``name`` is the gossip alias; None => "argus1" on
+    # mined networks (paired with the secondary "argus2"), else "argus-<net>".
+    name: str | None = None
+    color: str = "#3399ff"  # LND's default node color
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     auto_compact: bool = True  # bbolt auto-compact + canceled-invoice GC (hygiene)
+    # Discovery/channel-friendliness knobs (make it easy for peers to open to us):
+    advertise_external_ip: bool = True  # set externalip=<hostname>:<lnd_p2p_port>
+    wumbo: bool = False  # allow/accept channels > ~0.167 BTC (auto-on if channels need it)
+    min_chan_size: int | None = Field(default=None, ge=1)  # sats; lower for tiny channels
+    secondary: LndSecondaryCfg = Field(default_factory=LndSecondaryCfg)
+    channels: LndChannelsCfg = Field(default_factory=LndChannelsCfg)
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str | None) -> str | None:
+        return v if v is None else _check_alias(v)
+
+    @field_validator("color")
+    @classmethod
+    def _check_col(cls, v: str) -> str:
+        return _check_color(v)
 
 
 class CashuCfg(_Base):
@@ -247,6 +320,48 @@ class NetworkCfg(_Base):
             return spec.default_mempool
         return self.mempool.enabled
 
+    def lnd_secondary_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether a second LND node is deployed.
+
+        Defaults on for mined networks (so the auto-channel pair exists), but only
+        when the miner is on — disabling the miner cleanly opts out of the default
+        rather than forcing an error. An explicit value always wins.
+        """
+        v = self.lnd.secondary.enabled
+        return (spec.supports_miner and self.miner.enabled) if v is None else v
+
+    def lnd_channels_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether auto-funding + channel setup runs.
+
+        Defaults on for mined networks with the miner enabled (it funds the
+        channels). An explicit value always wins (and is validated).
+        """
+        v = self.lnd.channels.enabled
+        return (spec.supports_miner and self.miner.enabled) if v is None else v
+
+    def bitcoind_p2p_gated(self, net_key: str, spec: NetworkSpec) -> bool:
+        """Whether bitcoind self-gates its P2P listener (regtest auto-channels):
+        it keeps inbound P2P closed until LND channel setup completes, then
+        restarts with P2P open — so funding can't be reorged during setup.
+
+        Only regtest needs this — on custom-signet outsiders can't produce valid
+        blocks without our signing key, so early P2P exposure can't be abused.
+        """
+        return (
+            net_key == "regtest"
+            and self.bitcoind.p2p_public
+            and self.lnd_channels_enabled(spec)
+        )
+
+    def lnd_wumbo_enabled(self, spec: NetworkSpec) -> bool:
+        """Effective wumbo: explicit, or forced on when a large auto-channel needs it."""
+        if self.lnd.wumbo:
+            return True
+        if self.lnd_channels_enabled(spec):
+            # Max non-wumbo channel is 16,777,215 sat (~0.167 BTC).
+            return round(self.lnd.channels.channel_btc * 1e8) > 16_777_215
+        return False
+
 
 class WebCfg(_Base):
     """The Argus dashboard: a host-global web server fronted by the shared Caddy.
@@ -355,6 +470,39 @@ class ArgusConfig(_Base):
                 errors.append(
                     f"[{key}] automated mining is not implemented for this network"
                 )
+
+            # Secondary LND + auto-channels are only meaningful where Argus drives
+            # block production (it funds the channels by mining). Both default on
+            # there and off elsewhere; reject an explicit enable on other networks.
+            secondary_on = net.lnd_secondary_enabled(spec)
+            channels_on = net.lnd_channels_enabled(spec)
+            if secondary_on and not spec.supports_miner:
+                errors.append(
+                    f"[{key}] lnd.secondary is only supported on networks Argus "
+                    f"mines (regtest/custom-signet)"
+                )
+            if channels_on:
+                if not spec.supports_miner:
+                    errors.append(
+                        f"[{key}] lnd.channels auto-setup is only supported on "
+                        f"networks Argus mines (regtest/custom-signet)"
+                    )
+                if not secondary_on:
+                    errors.append(
+                        f"[{key}] lnd.channels requires lnd.secondary (two nodes are "
+                        f"needed to open channels between them)"
+                    )
+                if not net.miner.enabled:
+                    errors.append(
+                        f"[{key}] lnd.channels requires the miner (block production "
+                        f"funds the channels); enable miner or disable lnd.channels"
+                    )
+                if net.lnd.channels.channel_btc > net.lnd.channels.fund_btc:
+                    errors.append(
+                        f"[{key}] lnd.channels.channel_btc "
+                        f"({net.lnd.channels.channel_btc}) must be <= fund_btc "
+                        f"({net.lnd.channels.fund_btc})"
+                    )
 
             # Bitcart requires an admin email; an active liquidity helper needs
             # a cash-out Lightning address.
