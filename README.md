@@ -252,15 +252,38 @@ Tor is also a good way to test your app's robustness on higher-latency, less
 reliable links. (Caveat: Bitcart is reachable over Tor but not fully
 onion-native — some of its pages build absolute clearnet links.)
 
+### The two LND nodes under Tor (inbound vs. dialing out)
+
+A subtlety worth knowing on the two-node (mined) networks: **being reachable over
+Tor and *using* Tor to dial out are separate things.** When `tor.active` is on,
+LND routes outbound connections — including bare hostnames — through the SOCKS
+proxy to avoid DNS leaks; it can't reach a private Docker hostname that way, only
+`.onion` and direct-IP targets. So Argus splits the roles:
+
+- **`argus1` (primary)** runs **clearnet-only outbound** (no `tor.active`). It
+  still advertises the onion, so anyone can connect to it over Tor — it just
+  can't *initiate* connections to `.onion`-only peers. Use it for everyday work:
+  its outbound connectivity is direct and reliable.
+- **`argus2` (secondary)** runs in **Tor mode** (`tor.active`). Use it when you
+  want to **open a channel out to a node that's only reachable over Tor**.
+
+Regardless of these settings, **any other node — over Tor or clearnet — can
+connect to and open a channel with either of our nodes**; the Tor restriction
+only governs *dialing out*. (The auto-channel sidecar connects the two nodes by
+resolved container **IP** for exactly this reason — a hostname would be sent
+through Tor by `argus2` and fail.) If you don't run Tor, both nodes are plain
+clearnet and this distinction doesn't apply.
+
 `global.tor` toggles `expose_web` / `expose_electrum` / `expose_lnd_p2p` /
 `expose_bitcoind_p2p` narrow the surface without disabling Tor; `image` overrides
 the tor container image.
 
-**Deploy order matters with `expose_lnd_p2p`:** LND runs in hybrid Tor mode, so
-it reaches the shared tor container's SOCKS proxy through the host gateway. Bring
-up `generated/shared-tor/` **and** run `generated/firewall.sh` (which opens the
-Docker-bridge → SOCKS path) **before** the per-network stacks — otherwise LND
-can't reach the proxy and will restart-loop validating its onion `externalip`.
+**Deploy order matters with `expose_lnd_p2p`:** the secondary node (`argus2`)
+runs in Tor mode and reaches the shared tor container's SOCKS proxy through the
+host gateway. Bring up `generated/shared-tor/` **and** run `generated/firewall.sh`
+(which opens the Docker-bridge → SOCKS path) **before** the per-network stacks —
+otherwise `argus2` can't reach the proxy at startup and will restart-loop. The
+primary (`argus1`) is clearnet-only outbound, so it has no such dependency.
 
 ## Per-network notes
 

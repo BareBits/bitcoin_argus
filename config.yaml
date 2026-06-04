@@ -24,13 +24,18 @@ global:
   # Tor: expose the WHOLE installation behind a single v3 onion address. Routing
   # is by port — each sub-tool answers on the same port it uses on clearnet, just
   # on the onion host. Operator-only ports (Core RPC, LND gRPC/REST) stay private.
-  # The LND node(s) also advertise their onion so peers can open channels over Tor.
+  # The LND nodes advertise this onion so peers can reach them over Tor. On the
+  # two-node (mined) networks the roles split: the primary (argus1) is clearnet-
+  # only outbound (reliable; cannot dial .onion peers), while the secondary
+  # (argus2) runs in Tor mode and CAN open channels out to .onion peers. Both
+  # nodes accept inbound channels from anyone, Tor or clearnet. See README "Tor".
   tor:
     enabled: false                # opt-in; set true to stand up the onion
     # image: lncm/tor:0.4.7.13    # tor container image (override for your arch)
     # expose_web: true            # mempool / cashu / bitcart frontends + dashboard
     # expose_electrum: true       # public Fulcrum Electrum ports
-    # expose_lnd_p2p: true        # LND P2P (also drives onion advertisement)
+    # expose_lnd_p2p: true        # LND P2P over the onion (both nodes reachable
+    #                             # inbound; only argus2 dials out over Tor)
     # expose_bitcoind_p2p: true   # bitcoind P2P (only where already public)
 
 # The dashboard: a web server (fronted by the shared Caddy) that welcomes

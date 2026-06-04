@@ -153,23 +153,43 @@ def test_onion_seed_is_stable_across_regen(tmp_path):
 # --- LND advertisement + wiring --------------------------------------------
 
 
-def test_lnd_advertises_onion_and_enables_tor(tmp_path):
+def test_lnd_tor_split_primary_inbound_secondary_dials(tmp_path):
+    """Both nodes advertise the onion (reachable inbound over Tor), but only the
+    secondary runs in Tor mode (dials .onion peers); the primary is clearnet-only
+    outbound."""
     out, _ = _gen(tmp_path, _cfg({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     onion = (out / "shared-tor" / "keys" / "hostname").read_text().strip()
-    conf = (out / "regtest" / "lnd" / "lnd.conf").read_text()
     cfg = load_config(str(tmp_path / "config.yaml"))
-    p2p = allocate(cfg)["regtest"]["lnd_p2p"]
+    pm = allocate(cfg)["regtest"]
+    conf1 = (out / "regtest" / "lnd" / "lnd.conf").read_text()
+    conf2 = (out / "regtest" / "lnd2" / "lnd.conf").read_text()
 
-    # Dual-stack: both clearnet and onion externalips advertised.
-    assert f"externalip=x.com:{p2p}" in conf
-    assert f"externalip={onion}:{p2p}" in conf
-    # Tor section present; does NOT mint its own onion (no tor.v3).
-    assert "[Tor]" in conf and "tor.active=true" in conf
-    assert "tor.skip-proxy-for-clearnet-targets=true" in conf
-    assert "tor.v3" not in conf
+    # Both nodes advertise clearnet + onion externalips (reachable inbound).
+    assert f"externalip=x.com:{pm['lnd_p2p']}" in conf1
+    assert f"externalip={onion}:{pm['lnd_p2p']}" in conf1
+    assert f"externalip={onion}:{pm['lnd2_p2p']}" in conf2
+
+    # Primary: NOT in Tor mode (clearnet-only outbound).
+    assert "[Tor]" not in conf1 and "tor.active=true" not in conf1
+    # Secondary: Tor mode (can dial .onion peers); advertises the shared onion but
+    # mints none (no tor.v3).
+    assert "[Tor]" in conf2 and "tor.active=true" in conf2
+    assert "tor.skip-proxy-for-clearnet-targets=true" in conf2
+    assert "tor.v3" not in conf2
 
     compose = yaml.safe_load((out / "regtest" / "docker-compose.yml").read_text())
-    assert "argus-tor-host:host-gateway" in compose["services"]["lnd"]["extra_hosts"]
+    assert "extra_hosts" not in compose["services"]["lnd"]
+    assert "argus-tor-host:host-gateway" in compose["services"]["lnd2"]["extra_hosts"]
+    assert socks_open_to_containers(cfg)  # the secondary dials over Tor
+
+
+def test_channel_sidecar_connects_by_resolved_ip(tmp_path):
+    """The auto-channel sidecar dials siblings by resolved IP so the Tor-mode
+    secondary doesn't route a private hostname through Tor (which would fail)."""
+    out, _ = _gen(tmp_path, _cfg({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    ch = (out / "regtest" / "lnd_setup" / "channels.sh").read_text()
+    assert "getent hosts" in ch
+    assert "$(addr lnd2)" in ch and "$(addr lnd)" in ch
 
 
 def test_no_onion_externalip_when_lnd_not_exposed(tmp_path):

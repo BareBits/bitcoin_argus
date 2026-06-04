@@ -127,11 +127,18 @@ def onion_routes(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[
 def socks_open_to_containers(cfg: ArgusConfig) -> bool:
     """Whether tor's SOCKS must be reachable from the per-network LND containers.
 
-    LND dials onion peers (and validates its onion advertisement) through this
-    proxy. When LND P2P is not exposed over the onion, SOCKS stays loopback-only.
+    Only the SECONDARY LND node (``lnd2``) runs in Tor mode and dials peers
+    through this proxy; the primary node is clearnet-only outbound. So SOCKS is
+    opened to containers iff Tor + LND-P2P-on-onion are on AND some enabled
+    network actually has a secondary node — otherwise it stays loopback-only.
     """
     tor = cfg.global_.tor
-    return tor.enabled and tor.expose_lnd_p2p
+    if not (tor.enabled and tor.expose_lnd_p2p):
+        return False
+    return any(
+        net.lnd_secondary_enabled(NETWORK_SPECS[key])
+        for key, net in cfg.enabled_networks()
+    )
 
 
 def render_torrc(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> str:
