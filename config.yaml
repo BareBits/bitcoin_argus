@@ -56,6 +56,14 @@ networks:
       enabled: true
       block_interval_seconds: 60  # one new block per minute
       initial_blocks: 101         # coinbase maturity before steady state
+    reset:
+      # Auto-reset when the chain outgrows the cap. Defaults on for the mined
+      # networks (regtest + custom-signet). When bitcoind's on-disk size reaches
+      # max_size_gb the whole network is torn down and re-deployed to base config
+      # (all coins, Lightning channels, transactions, and tool state are wiped).
+      enabled: true
+      max_size_gb: 30             # cap on bitcoind size_on_disk (GiB)
+      # check_interval_seconds: 300  # how often the controller polls the size
     mempool:
       enabled: true               # no public explorer exists for regtest
     bitcart:
@@ -92,6 +100,10 @@ networks:
     miner:
       enabled: true               # Argus signs + mines blocks for this signet
       block_interval_seconds: 60  # one signed block per minute
+    reset:
+      enabled: true               # auto-reset on size cap (keeps the signet's
+      max_size_gb: 30             # challenge/key — resets to genesis as the
+                                  # SAME custom signet, just wiped to base config)
     bitcart:
       admin_email: admin@example.com
       liquidity:
@@ -129,6 +141,10 @@ networks:
 #   mempool:  { enabled, ssl, statistics, lightning }  # statistics default true
 #             (biggest DB grower; set false to save disk); lightning default true
 #             (indexes the local LND graph)
+#   reset:    { enabled, max_size_gb, check_interval_seconds }     # mined nets only
+#             # auto tear-down + re-deploy to base config when the chain's
+#             # size_on_disk reaches max_size_gb (default 30). enabled defaults on
+#             # for regtest/custom-signet, off elsewhere (rejected if set there).
 #   resources: { profile, log_rotation, bitcoind_dbcache, bitcoind_maxmempool,
 #                fulcrum_db_mem, fulcrum_db_max_open_files,
 #                mempool_mariadb_buffer_mb }  # per-network override of global

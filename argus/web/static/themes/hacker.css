@@ -249,3 +249,27 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 /* Donate / recycle section */
 .donate-addr { word-break: break-all; font-size: 0.85rem; }
 .donate .pending { opacity: 0.6; font-style: italic; }
+
+/* Auto-reset countdown banner (above the pros/cons of a mined network). */
+.reset-warning {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  margin: 0.6rem 0; padding: 0.5rem 0.7rem;
+  border: 1px solid var(--danger); border-left: 4px solid var(--danger);
+  background: rgba(255, 84, 112, 0.08); color: var(--fg-bright); font-size: 0.9rem;
+}
+.reset-icon { font-size: 1rem; }
+.reset-help {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; border-radius: 50%;
+  border: 1px solid var(--line-bright); color: var(--accent);
+  font-size: 0.75rem; cursor: help; user-select: none;
+}
+.reset-help:focus { outline: 2px solid var(--line-bright); outline-offset: 1px; }
+.reset-pop {
+  position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
+  display: none; z-index: 10; width: 16rem; white-space: normal; text-align: left;
+  background: #010410; border: 1px solid var(--line-bright); color: var(--fg);
+  padding: 0.5rem 0.6rem; font-size: 0.8rem; line-height: 1.4;
+  box-shadow: 0 0 12px rgba(60, 110, 255, 0.4);
+}
+.reset-help:hover .reset-pop, .reset-help:focus .reset-pop { display: block; }

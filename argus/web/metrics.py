@@ -31,7 +31,11 @@ _LND_NODEINFO_PATH = "/home/lnd/.lnd/argus_nodeinfo.json"
 # (see builders/donations.py).
 _DONATIONS_PATH = "/state/donations.json"
 
-from ..constants import NETWORK_ORDER
+from ..constants import (
+    NETWORK_ORDER,
+    RESET_CONTROLLER_CONTAINER,
+    RESET_STATE_FILE,
+)
 
 # Buckets we aggregate usage into. A network's row in the page asks for usage by
 # one of these (fulcrum indexers use their own name-derived bucket, see below).
@@ -112,6 +116,9 @@ class MetricsResult:
     lnd2: dict[str, str] = field(default_factory=dict)
     # donations[net_key] -> {"address", "total_received", "balance"} (BTC strings).
     donations: dict[str, dict[str, str]] = field(default_factory=dict)
+    # reset[net_key] -> {"size_on_disk", "limit_bytes", "block_interval_seconds",
+    # "max_size_gb"} as published by the auto-reset controller.
+    reset: dict[str, dict] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -121,6 +128,7 @@ class MetricsResult:
             "lnd": self.lnd,
             "lnd2": self.lnd2,
             "donations": self.donations,
+            "reset": self.reset,
             "errors": self.errors,
         }
 
@@ -168,6 +176,23 @@ def _donation_info(client, net_key: str) -> dict[str, str] | None:
         }
     except Exception:
         return None
+
+
+def _reset_state(client) -> dict[str, dict]:
+    """Read the auto-reset controller's per-network size/cap JSON.
+
+    Uses get_archive (a GET, allowed by the read-only socket proxy), like the
+    donation/LND readers. Returns an empty dict if the controller isn't deployed
+    or hasn't written a usable file yet."""
+    try:
+        ct = client.containers.get(RESET_CONTROLLER_CONTAINER)
+        bits, _ = ct.get_archive(RESET_STATE_FILE)
+        tf = tarfile.open(fileobj=io.BytesIO(b"".join(bits)))
+        member = tf.extractfile(tf.getmembers()[0])
+        data = json.loads(member.read().decode())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _container_memory_bytes(stats: dict) -> int:
@@ -235,6 +260,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
     lnd: dict[str, str] = {}
     lnd2: dict[str, str] = {}
     donations: dict[str, dict[str, str]] = {}
+    reset: dict[str, dict] = {}
     errors: list[str] = []
 
     try:
@@ -298,6 +324,9 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
             if info:
                 donations[net_key] = info
 
+        # Auto-reset controller state (single file, keyed by network).
+        reset = _reset_state(client)
+
     host, herrs = _host_metrics()
     serialisable = {
         net: {bucket: u.as_dict() for bucket, u in buckets.items()}
@@ -309,5 +338,6 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         lnd=lnd,
         lnd2=lnd2,
         donations=donations,
+        reset=reset,
         errors=errors + herrs,
     )

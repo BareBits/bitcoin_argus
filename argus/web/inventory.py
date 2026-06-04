@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
+from ..reset import format_reset_eta, seconds_until_reset
 from ..tor import onion_routes
 from .content import (
     MEMPOOL_SPACE_LN_NODE,
@@ -72,6 +73,27 @@ class DonationRow:
 
 
 @dataclass
+class ResetInfo:
+    """The auto-reset countdown for one network's section.
+
+    ``eta_text`` is the human countdown ("X days, Y hours", or "imminent"), or
+    None while the controller hasn't reported a chain size yet. ``max_size_gb``
+    drives the tooltip copy ("automatically resets every N GB")."""
+
+    max_size_gb: float
+    eta_text: str | None = None
+
+    @property
+    def known(self) -> bool:
+        return self.eta_text is not None
+
+    @property
+    def cap_text(self) -> str:
+        """The cap as a compact string (30 not 30.0; 0.05 stays 0.05)."""
+        return f"{self.max_size_gb:g}"
+
+
+@dataclass
 class NetworkSection:
     key: str
     title: str
@@ -81,6 +103,7 @@ class NetworkSection:
     attach: list[AttachCommand] = field(default_factory=list)
     ram_total: int = 0
     disk_total: int = 0
+    reset: ResetInfo | None = None
 
 
 def _url(cfg: ArgusConfig, service_ssl: bool, port: int) -> str:
@@ -263,6 +286,28 @@ def build_donations(cfg: ArgusConfig, metrics: dict) -> list[DonationRow]:
     return rows
 
 
+def _reset_info(cfg: ArgusConfig, net_key: str, metrics: dict) -> ResetInfo | None:
+    """Build the reset countdown for a network, or None if it isn't auto-reset.
+
+    The cap (``max_size_gb``) comes from config so the section can always explain
+    the policy; the live size (and thus the countdown) comes from the controller's
+    published state, which may not be there yet (then ``eta_text`` is None)."""
+    net = cfg.networks[net_key]
+    if not net.reset_enabled(net_key):
+        return None
+    info = ResetInfo(max_size_gb=net.reset.max_size_gb)
+    state = (metrics.get("reset") or {}).get(net_key) or {}
+    size = state.get("size_on_disk")
+    if size is not None:
+        eta = seconds_until_reset(
+            int(size),
+            int(state.get("limit_bytes", 0)),
+            int(state.get("block_interval_seconds", net.miner.block_interval_seconds)),
+        )
+        info.eta_text = format_reset_eta(eta)
+    return info
+
+
 def build_sections(
     cfg: ArgusConfig,
     port_map: dict[str, dict[str, int]],
@@ -294,6 +339,8 @@ def build_sections(
             variant=variant,
             enabled=net.enabled,
         )
+        if net.enabled:
+            section.reset = _reset_info(cfg, net_key, metrics)
         if net.enabled and net_key in port_map:
             ports = port_map[net_key]
             onion_ports = frozenset(
