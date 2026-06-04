@@ -39,7 +39,7 @@
     Here's when each mode tends to make the most sense — including plain
     <strong>regtest on your own machine</strong>:
   </p>
-  <div class="access-cols when-cols">
+  <div class="when-cols">
     {% for col in when_columns %}
     <div class="when-col{% if col.key == 'local-regtest' %} when-local{% endif %}">
       <h4>{{ col.title }}</h4>
@@ -85,6 +85,68 @@
   </p>
 </details>
 
+{% if donations %}
+<details class="donate host-totals" open>
+  <summary><span class="caret"></span><h2>💚 Donate / recycle your coins</h2></summary>
+  <p>
+    Done with your test coins? <strong>Please send them back!</strong> Each network
+    below has a public donation address — returning coins you no longer need keeps
+    the faucets topped up so the next developer can grab some too. It costs you
+    nothing (these coins have no value) and it's a kind thing to do. ♻️
+  </p>
+  <p class="cache-note">
+    The same address is reused for each network. <strong>Total donated</strong> is
+    everything ever received at that address; <strong>current balance</strong> is
+    what's in the network's wallet right now.
+  </p>
+  <table class="svc-table donate-table">
+    <thead>
+      <tr><th>Network</th><th>Donation address</th><th>Total donated</th><th>Current balance</th></tr>
+    </thead>
+    <tbody>
+      {% for d in donations %}
+      <tr>
+        <td>{{ d.title }}</td>
+        <td>
+          {% if d.address %}<code class="donate-addr">{{ d.address }}</code>
+          {% else %}<span class="pending">pending…</span>{% endif %}
+        </td>
+        <td class="num">{% if d.total_received is not none %}{{ d.total_received }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
+        <td class="num">{% if d.balance is not none %}{{ d.balance }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+{% if onion_hostname %}
+<details class="host-totals tor-intro" open>
+  <summary><span class="caret"></span><h2>🧅 Tor accessibility</h2></summary>
+  <p>
+    This whole installation is reachable over a <strong>single Tor v3 onion
+    address</strong>. There's nothing per-service to remember: routing is by
+    <em>port</em>, so each sub-tool answers on the same port it uses on
+    clearnet — just on the onion host instead. Visit an HTTP service in the Tor
+    Browser, or point a Tor-aware client (e.g. <code>torsocks</code>) at the
+    onion for the TCP services.
+  </p>
+  <pre class="cmd">{{ onion_hostname }}</pre>
+  <p class="attach-note">
+    Each service link in the network tables below shows a 🧅 — click it to copy
+    that tool's full onion URL. Reaching these tools over Tor is also a great way
+    to test your application's <strong>robustness in less reliable network
+    environments</strong>: onion circuits add real latency, jitter and occasional
+    drops, surfacing timeout and retry bugs that a fast local link hides.
+  </p>
+  <p class="attach-note">
+    One caveat: Bitcart is reachable over Tor but isn't fully onion-native — some
+    of its pages build absolute links from the clearnet hostname, so they may
+    point back to the clearnet site.
+  </p>
+</details>
+{% endif %}
+
 {% for s in sections %}
 <details class="net-section{% if not s.enabled %} disabled{% endif %}" id="{{ s.key }}" open>
   <summary class="net-head">
@@ -123,7 +185,7 @@
         </td>
         <td>
           {% for link in svc.links %}
-            <a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.label }}</a>{% if not loop.last %}, {% endif %}
+            <a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.label }}</a>{% if link.onion_url %}<span class="onion-copy" tabindex="0" role="button" data-onion="{{ link.onion_url }}" aria-label="Copy onion URL: {{ link.onion_url }}">🧅<span class="onion-pop"><code>{{ link.onion_url }}</code></span></span>{% endif %}{% if not loop.last %}, {% endif %}
           {% else %}—{% endfor %}
         </td>
         <td>
@@ -144,63 +206,21 @@
     </tbody>
   </table>
 
-  {% if s.attach %}
+  {% set vis = s.attach|selectattr('audience', 'equalto', 'visitor')|list %}
+  {% if vis %}
   <div class="attach">
     <h4>Attach your tools</h4>
-    {% if onion_hostname %}
-    <div class="attach-note attach-onion">
-      🧅 Over Tor, every service below is reachable at the installation's onion
-      address on its usual port:
-      <code>{{ onion_hostname }}</code>
-    </div>
-    {% endif %}
-    {% for a in s.attach %}
-    <div class="attach-item attach-{{ a.audience }}">
-      <div class="attach-label">
-        {{ a.label }}
-        <span class="aud {{ 'aud-v' if a.audience == 'visitor' else 'aud-o' }}">{{ 'Visitor' if a.audience == 'visitor' else 'Operator only' }}</span>
-      </div>
+    {% for a in vis %}
+    <div class="attach-item attach-visitor">
+      <div class="attach-label">{{ a.label }}</div>
       <pre class="cmd">{{ a.command }}</pre>
       {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
+      {% if a.command_onion %}
+      <pre class="cmd cmd-onion">🧅 {{ a.command_onion }}</pre>
+      {% if a.note_onion %}<div class="attach-note">{{ a.note_onion }}</div>{% endif %}
+      {% endif %}
     </div>
     {% endfor %}
-  </div>
-  {% endif %}
-
-  {% if onion_hostname and s.onion %}
-  <div class="tor-access">
-    <h4>🧅 Tor accessibility</h4>
-    <p>
-      This whole installation is reachable over a <strong>single Tor v3 onion
-      address</strong>. There's nothing per-service to remember: routing is by
-      <em>port</em>, so each sub-tool answers on the same port it uses on
-      clearnet — just on the onion host instead. Visit an HTTP service in the
-      Tor Browser, or point a Tor-aware client (e.g. <code>torsocks</code>) at
-      the onion for the TCP services.
-    </p>
-    <pre class="cmd">{{ onion_hostname }}</pre>
-    <table class="svc-table tor-table">
-      <thead><tr><th>Sub-tool</th><th>Onion address</th></tr></thead>
-      <tbody>
-        {% for o in s.onion %}
-        <tr>
-          <td>{{ o.service }}</td>
-          <td><code>{{ onion_hostname }}:{{ o.port }}</code></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <p class="attach-note">
-      Reaching these tools over Tor is also a great way to test your application's
-      <strong>robustness in less reliable network environments</strong> — onion
-      circuits add real latency, jitter and occasional drops, so it surfaces
-      timeout and retry bugs that a fast local link hides.
-    </p>
-    <p class="attach-note">
-      One caveat: Bitcart is reachable over Tor but isn't fully onion-native — some
-      of its pages build absolute links from the clearnet hostname, so they may
-      point back to the clearnet site.
-    </p>
   </div>
   {% endif %}
   {% endif %}
@@ -235,38 +255,31 @@
   {% endif %}
 </details>
 
-{% if donations %}
-<details class="donate host-totals" open>
-  <summary><span class="caret"></span><h2>💚 Donate / recycle your coins</h2></summary>
+{% set ns = namespace(any=false) %}
+{% for s in sections %}{% for a in s.attach if a.audience == 'operator' %}{% set ns.any = true %}{% endfor %}{% endfor %}
+{% if ns.any %}
+<details class="host-totals operator-only">
+  <summary><span class="caret"></span><h2>🔧 Operator only</h2></summary>
   <p>
-    Done with your test coins? <strong>Please send them back!</strong> Each network
-    below has a public donation address — returning coins you no longer need keeps
-    the faucets topped up so the next developer can grab some too. It costs you
-    nothing (these coins have no value) and it's a kind thing to do. ♻️
+    These recipes need a shell login on the server — they reach services bound to
+    the host's localhost (Bitcoin Core RPC and the like) that visitors can't use.
+    Collected here, out of the way.
   </p>
-  <p class="cache-note">
-    The same address is reused for each network. <strong>Total donated</strong> is
-    everything ever received at that address; <strong>current balance</strong> is
-    what's in the network's wallet right now.
-  </p>
-  <table class="svc-table donate-table">
-    <thead>
-      <tr><th>Network</th><th>Donation address</th><th>Total donated</th><th>Current balance</th></tr>
-    </thead>
-    <tbody>
-      {% for d in donations %}
-      <tr>
-        <td>{{ d.title }}</td>
-        <td>
-          {% if d.address %}<code class="donate-addr">{{ d.address }}</code>
-          {% else %}<span class="pending">pending…</span>{% endif %}
-        </td>
-        <td class="num">{% if d.total_received is not none %}{{ d.total_received }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
-        <td class="num">{% if d.balance is not none %}{{ d.balance }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% for s in sections %}
+  {% set ops = s.attach|selectattr('audience', 'equalto', 'operator')|list %}
+  {% if ops %}
+  <div class="operator-net">
+    <h4>{{ s.title }}</h4>
+    {% for a in ops %}
+    <div class="attach-item attach-operator">
+      <div class="attach-label">{{ a.label }}</div>
+      <pre class="cmd">{{ a.command }}</pre>
+      {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endfor %}
 </details>
 {% endif %}
 {% endblock %}

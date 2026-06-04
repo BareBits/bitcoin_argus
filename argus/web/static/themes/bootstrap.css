@@ -47,7 +47,7 @@ a:hover { text-decoration: underline; }
   color: #664d03; border-bottom: 1px solid #ffe69c;
 }
 .warning strong { color: var(--danger); }
-.warning-policy { margin-top: 0.4rem; font-size: 0.95rem; }
+.warning-policy { font-size: 0.95rem; }
 
 .container { max-width: 1040px; margin: 0 auto; padding: 1.75rem 1.25rem 3rem; }
 
@@ -69,10 +69,13 @@ h1, h2, h3, h4 { color: var(--fg); font-weight: 600; }
 .status-disabled { background: #e9ecef; color: var(--muted); }
 .blurb { color: var(--muted); }
 
-.proscons { display: flex; gap: 2rem; flex-wrap: wrap; }
+.proscons { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 .proscons > div { flex: 1 1 240px; }
 .pros h4 { color: var(--success); }
 .cons h4 { color: var(--danger); }
+.proscons h4 { font-size: 0.95rem; margin: 0.2rem 0; }
+.proscons ul { margin: 0.3rem 0; padding-left: 1.1rem; }
+.proscons li { font-size: 0.9rem; line-height: 1.4; }
 
 .svc-table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; }
 .svc-table th, .svc-table td { border-bottom: 1px solid var(--border); padding: 0.55rem 0.6rem; text-align: left; }
@@ -150,12 +153,47 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 .picker > summary:hover .caret, .net-section > summary:hover .caret,
 .access-model > summary:hover .caret, .host-totals > summary:hover .caret { border-left-color: var(--primary); }
 
-/* Network-picker columns + Tor accessibility */
-.when-cols { margin-top: 0.6rem; }
-.when-col.when-local { border: 1px solid var(--primary); border-radius: .375rem; background: rgba(13, 110, 253, 0.04); }
-.tor-access { padding: .6rem 1rem 1rem; border-top: 1px solid var(--border); }
-.tor-access h4 { color: var(--primary); margin: .6rem 0 .4rem; }
-.tor-table { margin: .6rem 0; }
+/* Network-picker columns: equal side-by-side cards that wrap evenly. */
+.when-cols {
+  display: grid; gap: 0.75rem; margin-top: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.when-col {
+  border: 1px solid var(--border); border-radius: 0.375rem;
+  background: var(--bg); padding: 0.6rem 0.75rem;
+}
+.when-col h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+.when-col ul { margin: 0; padding-left: 1.1rem; }
+.when-col li { font-size: 0.85rem; line-height: 1.4; }
+.when-col.when-local { border-color: var(--primary); background: rgba(13, 110, 253, 0.04); }
+
+/* Tor: per-link copyable onion icon + the single intro panel. */
+.onion-copy {
+  position: relative; display: inline-block; cursor: pointer; margin-left: 0.2rem;
+  font-size: 0.85rem; line-height: 1; user-select: none;
+}
+.onion-copy:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+.onion-pop {
+  position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%);
+  display: none; z-index: 10; white-space: nowrap;
+  background: #0b1021; border-radius: 0.375rem;
+  padding: 0.35rem 0.5rem; box-shadow: var(--shadow);
+}
+.onion-pop code { color: #e6edf3; font-size: 0.8rem; }
+.onion-copy:hover .onion-pop, .onion-copy:focus .onion-pop { display: block; }
+.onion-copy.copied::after {
+  content: "copied!"; position: absolute; left: 50%; bottom: 140%;
+  transform: translateX(-50%); white-space: nowrap; z-index: 11;
+  background: var(--success); color: #fff; border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem; font-size: 0.8rem;
+}
+.onion-copy.copied .onion-pop { display: none; }
+.cmd-onion { margin-top: 0.4rem; }
+.tor-intro .cmd { display: inline-block; }
+
+/* Operator-only section at the foot of the page. */
+.operator-net { margin-top: 0.5rem; }
+.operator-net > h4 { margin: 0.6rem 0 0.2rem; color: var(--muted); }
 
 /* Donate / recycle section */
 .donate-addr { word-break: break-all; font-size: 0.85rem; }

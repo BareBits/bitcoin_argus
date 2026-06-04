@@ -19,11 +19,9 @@
   </header>
 
   <div class="warning" role="alert">{{ warning_html|safe }}
-    <div class="warning-policy">
-      By using these services you agree to our
-      <a href="/tos">Acceptable Use Policy</a> and
-      <a href="/privacy">Privacy Policy</a>.
-    </div>
+    <span class="warning-policy">By using these services you agree to our
+    <a href="/tos">Acceptable Use Policy</a> and
+    <a href="/privacy">Privacy Policy</a>.</span>
   </div>
 
   <main class="container">
@@ -31,5 +29,26 @@
   </main>
 
   {% include "footer.html" %}
+
+  <script>
+    // Click a 🧅 onion icon to copy its onion URL to the clipboard.
+    document.addEventListener("click", function (e) {
+      var el = e.target.closest(".onion-copy");
+      if (!el) return;
+      var url = el.dataset.onion;
+      var done = function () {
+        var prev = el.getAttribute("aria-label");
+        el.classList.add("copied");
+        el.setAttribute("aria-label", "copied!");
+        setTimeout(function () {
+          el.classList.remove("copied");
+          el.setAttribute("aria-label", prev);
+        }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done, function () {});
+      }
+    });
+  </script>
 </body>
 </html>

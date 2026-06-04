@@ -35,14 +35,9 @@ class PortRef:
 class LinkRef:
     label: str
     url: str
-
-
-@dataclass
-class OnionPortRef:
-    """One sub-tool reachable over the installation's onion at this port."""
-
-    service: str
-    port: int
+    # The same endpoint over Tor (http://<onion>:<port>/<path>), when this
+    # service is exposed on the installation's onion. None => clearnet only.
+    onion_url: str | None = None
 
 
 @dataclass
@@ -84,7 +79,6 @@ class NetworkSection:
     enabled: bool
     services: list[ServiceRow] = field(default_factory=list)
     attach: list[AttachCommand] = field(default_factory=list)
-    onion: list[OnionPortRef] = field(default_factory=list)
     ram_total: int = 0
     disk_total: int = 0
 
@@ -102,7 +96,12 @@ def _usage(metrics: dict, net_key: str, bucket: str) -> tuple[int | None, int | 
 
 
 def _service_rows(
-    cfg: ArgusConfig, net_key: str, ports: dict[str, int], metrics: dict
+    cfg: ArgusConfig,
+    net_key: str,
+    ports: dict[str, int],
+    metrics: dict,
+    onion_hostname: str | None = None,
+    onion_ports: frozenset[int] = frozenset(),
 ) -> list[ServiceRow]:
     net = cfg.networks[net_key]
     spec = NETWORK_SPECS[net_key]
@@ -111,6 +110,18 @@ def _service_rows(
     def row(name: str, bucket: str, **kw) -> ServiceRow:
         ram, disk = _usage(metrics, net_key, bucket)
         return ServiceRow(name=name, bucket=bucket, ram=ram, disk=disk, **kw)
+
+    def link(label: str, ssl: bool, port: int, path: str = "") -> LinkRef:
+        """A service link plus its onion equivalent (same port, routed by Tor).
+        The onion URL is set only when this port is actually exposed on the
+        installation's onion; ``_url`` already ends with a trailing slash."""
+        clear = _url(cfg, ssl, port) + path
+        onion = (
+            f"http://{onion_hostname}:{port}/{path}"
+            if onion_hostname and port in onion_ports
+            else None
+        )
+        return LinkRef(label, clear, onion)
 
     # Bitcoin Core node (always present).
     rows.append(
@@ -135,8 +146,10 @@ def _service_rows(
     def lnd_row(bucket: str, label: str, p2p: str, rest: str, grpc: str, pk) -> None:
         links: list[LinkRef] = []
         if pk and net.mempool_enabled(spec):
-            base = _url(cfg, net.mempool.ssl, ports["mempool_public"])
-            links.append(LinkRef("Node on mempool", f"{base}lightning/node/{pk}"))
+            links.append(
+                link("Node on mempool", net.mempool.ssl, ports["mempool_public"],
+                     f"lightning/node/{pk}")
+            )
         elif pk and net_key in MEMPOOL_SPACE_LN_NODE:
             links.append(
                 LinkRef("Node on mempool.space", f"{MEMPOOL_SPACE_LN_NODE[net_key]}{pk}")
@@ -186,7 +199,7 @@ def _service_rows(
                 "Cashu mint",
                 "cashu",
                 ports=[PortRef("HTTP", ports["cashu_public"], public=True)],
-                links=[LinkRef("Mint", _url(cfg, net.cashu.ssl, ports["cashu_public"]))],
+                links=[link("Mint", net.cashu.ssl, ports["cashu_public"])],
             )
         )
 
@@ -197,7 +210,7 @@ def _service_rows(
                 "mempool explorer",
                 "mempool",
                 ports=[PortRef("Web", ports["mempool_public"], public=True)],
-                links=[LinkRef("Explorer", _url(cfg, net.mempool.ssl, ports["mempool_public"]))],
+                links=[link("Explorer", net.mempool.ssl, ports["mempool_public"])],
             )
         )
 
@@ -213,9 +226,9 @@ def _service_rows(
                     PortRef("API", ports["bitcart_api_public"], public=True),
                 ],
                 links=[
-                    LinkRef("Store", _url(cfg, net.bitcart.ssl, ports["bitcart_store_public"])),
-                    LinkRef("Admin", _url(cfg, net.bitcart.ssl, ports["bitcart_admin_public"])),
-                    LinkRef("API", _url(cfg, net.bitcart.ssl, ports["bitcart_api_public"])),
+                    link("Store", net.bitcart.ssl, ports["bitcart_store_public"]),
+                    link("Admin", net.bitcart.ssl, ports["bitcart_admin_public"]),
+                    link("API", net.bitcart.ssl, ports["bitcart_api_public"]),
                 ],
             )
         )
@@ -283,7 +296,12 @@ def build_sections(
         )
         if net.enabled and net_key in port_map:
             ports = port_map[net_key]
-            section.services = _service_rows(cfg, net_key, ports, metrics)
+            onion_ports = frozenset(
+                r.virtual_port for r in onion_by_net.get(net_key, [])
+            )
+            section.services = _service_rows(
+                cfg, net_key, ports, metrics, onion_hostname, onion_ports
+            )
             section.ram_total = sum(s.ram or 0 for s in section.services)
             section.disk_total = sum(s.disk or 0 for s in section.services)
             section.attach = attach_commands(
@@ -305,29 +323,24 @@ def build_sections(
                     uris.append((net.lnd.secondary.name, pk2, ports["lnd2_p2p"]))
             for label, pk, p2p in reversed(uris):
                 uri = f"{pk}@{cfg.global_.hostname}:{p2p}"
-                # Onion connect line first (when Tor is on) so it sits above the
-                # clearnet one: the node advertises this onion in gossip, so peers
-                # can open channels to it over Tor.
+                # Clearnet connect line, with the onion connect (when Tor is on)
+                # shown right below it in the SAME container. The node advertises
+                # this onion in gossip, so peers can open channels over Tor too.
+                onion_cmd = ""
+                onion_note = ""
                 if onion_hostname:
-                    onion_uri = f"{pk}@{onion_hostname}:{p2p}"
-                    section.attach.insert(0, AttachCommand(
-                        label=f"Lightning node {label} (LND) — connect over Tor",
-                        command=f"lncli connect {onion_uri}",
-                        note="The node advertises this onion URI in gossip; "
-                             "torify/launch lncli through Tor to reach it.",
-                        audience="visitor",
-                    ))
+                    onion_cmd = f"lncli connect {pk}@{onion_hostname}:{p2p}"
+                    onion_note = (
+                        "Over Tor: the node advertises this onion URI in gossip; "
+                        "torify/launch lncli through Tor to reach it."
+                    )
                 section.attach.insert(0, AttachCommand(
                     label=f"Lightning node {label} (LND) — connect / open a channel",
                     command=f"lncli connect {uri}",
                     note="The node's public connection URI is pubkey@host:port.",
                     audience="visitor",
+                    command_onion=onion_cmd,
+                    note_onion=onion_note,
                 ))
-
-            # Per-network onion port map (for the "Tor accessibility" section).
-            section.onion = [
-                OnionPortRef(r.service, r.virtual_port)
-                for r in onion_by_net.get(net_key, [])
-            ]
         sections.append(section)
     return sections
