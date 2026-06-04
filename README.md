@@ -237,8 +237,8 @@ can't reach the proxy and will restart-loop validating its onion `externalip`.
 
 - **regtest** — self-mined (1 block/min by default); self-hosted explorer (no
   public one exists).
-- **signet** — default public signet; explorer off by default (use
-  mempool.space/signet).
+- **signet** — public signet; **off by default** (enable it to run a local
+  node); local explorer off too (use mempool.space/signet).
 - **testnet3 / testnet4** — explorers off by default (mempool.space hosts them).
 - **mutinynet** — custom 30s-block signet; explorer on by default. Requires
   `global.bitcoind_knots_image` (a `signetblocktime`-capable bitcoind — no public

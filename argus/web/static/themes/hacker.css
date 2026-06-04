@@ -73,7 +73,7 @@ a:hover { color: #a9c6ff; text-decoration: underline; }
   color: #ffd6de; border-top: 1px solid #3a0a18; border-bottom: 2px solid var(--danger);
 }
 .warning strong { color: var(--danger); text-shadow: 0 0 6px rgba(255,84,112,0.6); }
-.warning-policy { margin-top: 0.4rem; font-size: 0.9rem; }
+.warning-policy { font-size: 0.9rem; }
 .warning-policy a { color: #ffb3c0; }
 
 .container { max-width: 1040px; margin: 0 auto; padding: 1.75rem 1rem 3rem; }
@@ -113,7 +113,8 @@ h1, h2, h3, h4 { color: var(--fg-bright); }
 .proscons { display: flex; gap: 1.5rem; flex-wrap: wrap; padding-bottom: 0.6rem; }
 .proscons > div { flex: 1 1 240px; }
 .pros h4, .cons h4 { padding: 0.25rem 0.5rem; border-radius: 2px; font-size: 0.85rem; letter-spacing: 1px; }
-.proscons ul { margin: 0.4rem 0; padding-left: 1.1rem; }
+.proscons ul { margin: 0.3rem 0; padding-left: 1.1rem; }
+.proscons li { font-size: 0.88rem; line-height: 1.4; }
 
 .svc-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
 .svc-table thead tr { text-shadow: 0 0 6px rgba(120,160,255,0.6); }
@@ -206,13 +207,44 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 .aud-o { color: #ffb454; border: 1px solid #ffb454; background: rgba(255, 180, 84, 0.08); }
 .attach-operator { opacity: 0.92; }
 
-/* Network-picker columns + Tor accessibility */
-.when-cols { margin-top: 0.6rem; }
-.when-col.when-local { border: 1px dashed var(--line-bright); border-radius: 3px; background: rgba(90, 134, 255, 0.06); }
-.tor-access { padding: 0.6rem 1.3rem 1rem; border-top: 1px solid var(--line); }
-.tor-access h4 { color: var(--accent); margin: 0.6rem 0 0.4rem; }
-.tor-table { margin: 0.6rem 0; }
-.attach-onion code, .tor-access code { color: var(--accent); }
+/* Network-picker columns: equal side-by-side cards that wrap evenly. */
+.when-cols {
+  display: grid; gap: 0.75rem; margin-top: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.when-col {
+  border: 1px solid var(--line); border-radius: 3px;
+  background: rgba(20, 45, 130, 0.25); padding: 0.6rem 0.75rem;
+}
+.when-col h4 { margin: 0 0 0.4rem; font-size: 0.95rem; color: var(--accent); }
+.when-col ul { margin: 0; padding-left: 1.1rem; }
+.when-col li { font-size: 0.85rem; line-height: 1.4; }
+.when-col.when-local { border: 1px dashed var(--line-bright); background: rgba(90, 134, 255, 0.1); }
+
+/* Tor: per-link copyable onion icon + the single intro panel. */
+.onion-copy {
+  position: relative; display: inline-block; cursor: pointer; margin-left: 0.2rem;
+  font-size: 0.85rem; line-height: 1; user-select: none;
+}
+.onion-copy:focus { outline: 2px solid var(--line-bright); outline-offset: 1px; }
+.onion-pop {
+  position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%);
+  display: none; z-index: 10; white-space: nowrap;
+  background: #010410; border: 1px solid var(--line-bright);
+  padding: 0.35rem 0.5rem; box-shadow: 0 0 12px rgba(60, 110, 255, 0.4);
+}
+.onion-pop code { color: var(--accent); font-size: 0.8rem; }
+.onion-copy:hover .onion-pop, .onion-copy:focus .onion-pop { display: block; }
+.onion-copy.copied::after {
+  content: "copied!"; position: absolute; left: 50%; bottom: 140%;
+  transform: translateX(-50%); white-space: nowrap; z-index: 11;
+  background: var(--ok); color: #02030c; border-radius: 2px;
+  padding: 0.25rem 0.5rem; font-size: 0.8rem;
+}
+.onion-copy.copied .onion-pop { display: none; }
+
+/* Operator-only section at the foot of the page. */
+.operator-net > h4 { margin: 0.6rem 0 0.2rem; color: var(--accent); }
 
 /* Donate / recycle section */
 .donate-addr { word-break: break-all; font-size: 0.85rem; }

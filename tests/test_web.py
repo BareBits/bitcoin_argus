@@ -424,11 +424,13 @@ def test_build_sections_onion_population():
         s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}}, onion)
         if s.key == "regtest"
     )
-    services = {o.service: o.port for o in section.onion}
-    # HTTP service uses its clearnet public port on the onion.
-    assert services["mempool explorer"] == port_map["regtest"]["mempool_public"]
-    # Operator-only ports are absent from the onion map.
-    assert all("RPC" not in name and "gRPC" not in name for name in services)
+    # Each public HTTP service link carries an onion equivalent on the same port.
+    mempool = next(s for s in section.services if s.name == "mempool explorer")
+    port = port_map["regtest"]["mempool_public"]
+    assert mempool.links[0].onion_url == f"http://{onion}:{port}/"
+    # Operator-only services (no public link) have no link to carry an onion URL.
+    core = next(s for s in section.services if s.name == "Bitcoin Core node")
+    assert core.links == []
 
 
 def test_build_sections_no_onion_without_hostname():
@@ -438,7 +440,10 @@ def test_build_sections_no_onion_without_hostname():
         s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}})
         if s.key == "regtest"
     )
-    assert section.onion == []  # Tor off => no onion map
+    # Tor off => no link carries an onion URL.
+    assert all(
+        link.onion_url is None for svc in section.services for link in svc.links
+    )
 
 
 def test_onion_lnd_connect_line_present():
@@ -454,10 +459,15 @@ def test_onion_lnd_connect_line_present():
             cfg, port_map, {"usage": {}, "host": {}, "lnd": {"regtest": pk}}, onion)
         if s.key == "regtest"
     )
-    connects = [a.command for a in section.attach if "lncli connect" in a.command]
+    # Clearnet connect and its onion variant now live in ONE attach item:
+    # the clearnet URI in .command, the onion URI in .command_onion.
     p2p = port_map["regtest"]["lnd_p2p"]
-    assert any(f"{pk}@{onion}:{p2p}" in c for c in connects)  # onion connect URI
-    assert any(f"{pk}@{cfg.global_.hostname}:{p2p}" in c for c in connects)  # clearnet (dual)
+    lnd = next(
+        a for a in section.attach
+        if "lncli connect" in a.command and f":{p2p}" in a.command
+    )
+    assert f"{pk}@{cfg.global_.hostname}:{p2p}" in lnd.command  # clearnet URI
+    assert f"{pk}@{onion}:{p2p}" in lnd.command_onion  # onion URI, same container
 
 
 # --- generation -------------------------------------------------------------

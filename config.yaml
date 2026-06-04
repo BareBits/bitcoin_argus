@@ -63,8 +63,9 @@ networks:
       liquidity:
         cashout_lightning_address: pay@example.com # required while liquidity on
 
+  # --- scaffolded but disabled (flip `enabled: true` to use) ----------------
   signet:
-    enabled: true                 # default public signet (no challenge needed)
+    enabled: false                # public signet, off by default (no challenge needed)
     mempool:
       enabled: false              # mempool.space hosts a public signet explorer
     bitcart:
@@ -72,7 +73,6 @@ networks:
       liquidity:
         cashout_lightning_address: pay@example.com
 
-  # --- scaffolded but disabled (flip `enabled: true` to use) ----------------
   testnet3:
     enabled: false                # mempool.space hosts a public testnet3 explorer
 
