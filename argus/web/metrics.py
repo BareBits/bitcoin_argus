@@ -27,6 +27,10 @@ from dataclasses import dataclass, field
 # Where the LND node-info sidecar writes the identity pubkey (see builders/lnd.py).
 _LND_NODEINFO_PATH = "/home/lnd/.lnd/argus_nodeinfo.json"
 
+# Where the donations sidecar writes {address, total_received, balance}
+# (see builders/donations.py).
+_DONATIONS_PATH = "/state/donations.json"
+
 from ..constants import NETWORK_ORDER
 
 # Buckets we aggregate usage into. A network's row in the page asks for usage by
@@ -106,6 +110,8 @@ class MetricsResult:
     # lnd[net_key] / lnd2[net_key] -> identity pubkey (hex), when discoverable.
     lnd: dict[str, str] = field(default_factory=dict)
     lnd2: dict[str, str] = field(default_factory=dict)
+    # donations[net_key] -> {"address", "total_received", "balance"} (BTC strings).
+    donations: dict[str, dict[str, str]] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -114,6 +120,7 @@ class MetricsResult:
             "host": self.host,
             "lnd": self.lnd,
             "lnd2": self.lnd2,
+            "donations": self.donations,
             "errors": self.errors,
         }
 
@@ -134,6 +141,31 @@ def _lnd_pubkey(client, net_key: str, service: str = "lnd") -> str | None:
         data = json.loads(member.read().decode())
         pubkey = data.get("identity_pubkey")
         return pubkey or None
+    except Exception:
+        return None
+
+
+def _donation_info(client, net_key: str) -> dict[str, str] | None:
+    """Read the donation address + figures the per-network sidecar writes.
+
+    Uses get_archive (a GET, allowed by the read-only socket proxy), so the
+    dashboard needs no RPC credentials or per-network wiring. Returns None if the
+    sidecar isn't up yet or hasn't written a usable file.
+    """
+    try:
+        ct = client.containers.get(f"argus-{net_key}-donations")
+        bits, _ = ct.get_archive(_DONATIONS_PATH)
+        tf = tarfile.open(fileobj=io.BytesIO(b"".join(bits)))
+        member = tf.extractfile(tf.getmembers()[0])
+        data = json.loads(member.read().decode())
+        addr = data.get("address")
+        if not addr:
+            return None
+        return {
+            "address": addr,
+            "total_received": data.get("total_received"),
+            "balance": data.get("balance"),
+        }
     except Exception:
         return None
 
@@ -202,6 +234,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
     usage: dict[str, dict[str, Usage]] = {}
     lnd: dict[str, str] = {}
     lnd2: dict[str, str] = {}
+    donations: dict[str, dict[str, str]] = {}
     errors: list[str] = []
 
     try:
@@ -252,7 +285,8 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         except Exception as exc:
             errors.append(f"disk usage (system/df): {exc}")
 
-        # LND identity pubkeys (per network, both nodes), best-effort.
+        # LND identity pubkeys (per network, both nodes) + donation figures,
+        # all best-effort.
         for net_key in net_keys or []:
             pubkey = _lnd_pubkey(client, net_key)
             if pubkey:
@@ -260,6 +294,9 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
             pubkey2 = _lnd_pubkey(client, net_key, service="lnd2")
             if pubkey2:
                 lnd2[net_key] = pubkey2
+            info = _donation_info(client, net_key)
+            if info:
+                donations[net_key] = info
 
     host, herrs = _host_metrics()
     serialisable = {
@@ -267,5 +304,10 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         for net, buckets in usage.items()
     }
     return MetricsResult(
-        usage=serialisable, host=host, lnd=lnd, lnd2=lnd2, errors=errors + herrs
+        usage=serialisable,
+        host=host,
+        lnd=lnd,
+        lnd2=lnd2,
+        donations=donations,
+        errors=errors + herrs,
     )

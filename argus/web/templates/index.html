@@ -234,4 +234,39 @@
   </details>
   {% endif %}
 </details>
+
+{% if donations %}
+<details class="donate host-totals" open>
+  <summary><span class="caret"></span><h2>💚 Donate / recycle your coins</h2></summary>
+  <p>
+    Done with your test coins? <strong>Please send them back!</strong> Each network
+    below has a public donation address — returning coins you no longer need keeps
+    the faucets topped up so the next developer can grab some too. It costs you
+    nothing (these coins have no value) and it's a kind thing to do. ♻️
+  </p>
+  <p class="cache-note">
+    The same address is reused for each network. <strong>Total donated</strong> is
+    everything ever received at that address; <strong>current balance</strong> is
+    what's in the network's wallet right now.
+  </p>
+  <table class="svc-table donate-table">
+    <thead>
+      <tr><th>Network</th><th>Donation address</th><th>Total donated</th><th>Current balance</th></tr>
+    </thead>
+    <tbody>
+      {% for d in donations %}
+      <tr>
+        <td>{{ d.title }}</td>
+        <td>
+          {% if d.address %}<code class="donate-addr">{{ d.address }}</code>
+          {% else %}<span class="pending">pending…</span>{% endif %}
+        </td>
+        <td class="num">{% if d.total_received is not none %}{{ d.total_received }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
+        <td class="num">{% if d.balance is not none %}{{ d.balance }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
 {% endblock %}

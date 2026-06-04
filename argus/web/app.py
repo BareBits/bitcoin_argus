@@ -10,7 +10,7 @@ from ..config import ArgusConfig, load_config
 from ..ports import allocate
 from . import cache, metrics
 from .content import when_to_use_columns
-from .inventory import build_sections
+from .inventory import build_donations, build_sections
 
 _DEFAULT_CONFIG = os.environ.get("CONFIG_PATH", "config.yaml")
 # Set by the generated dashboard compose when Tor is enabled (see web_gen.py).
@@ -108,6 +108,7 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
         return render_template(
             "index.html",
             sections=sections,
+            donations=build_donations(cfg, payload),
             when_columns=when_to_use_columns(net_keys),
             host=payload.get("host", {}),
             metrics_errors=payload.get("errors", []),

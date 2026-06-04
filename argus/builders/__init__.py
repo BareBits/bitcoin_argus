@@ -13,6 +13,7 @@ from typing import Callable
 from ..context import BuildContext, Fragment
 from .bitcoind import build_bitcoind
 from .cashu import build_cashu
+from .donations import build_donations
 from .fulcrum import build_fulcrum
 from .lnd import build_lnd
 from .mempool import build_mempool
@@ -39,4 +40,7 @@ REGISTRY: list[SubTool] = [
         build_miner,
         lambda c: c.spec.supports_miner and c.net.miner.enabled,
     ),
+    # Donation address + figures writer. Always on: it works off bitcoind (always
+    # present), reusing the miner's wallet where there is one.
+    SubTool("donations", build_donations, lambda c: True),
 ]

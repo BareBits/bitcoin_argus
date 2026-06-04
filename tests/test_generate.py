@@ -152,6 +152,43 @@ def test_lnd_nodeinfo_sidecar(tmp_path):
     assert "argus_nodeinfo.json" in script and "newaddress p2wkh" in script
 
 
+def test_donations_sidecar_reuses_mining_wallet(tmp_path):
+    # regtest + custom-signet mine into their own wallet; the donations sidecar
+    # must reuse it (never recreate — that would race the miner / drop the signer
+    # key) and the donation address goes into that same single wallet.
+    out, _ = _gen(tmp_path, make({
+        "regtest": {"enabled": True, "bitcart": BITCART_OFF},
+        "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+    }))
+    for net, wallet, flag in (("regtest", "miner", "-regtest"),
+                              ("custom-signet", "signer", "-signet")):
+        compose = yaml.safe_load(_read(out / net / "docker-compose.yml"))
+        assert "donations" in compose["services"]
+        d = compose["services"]["donations"]
+        assert d["depends_on"]["bitcoind"]["condition"] == "service_healthy"
+        assert d["entrypoint"] == ["/bin/sh", "/scripts/donations.sh"]
+        assert d["user"] == "0:0"  # writes the root-owned state volume
+        env = d["environment"]
+        assert env["WALLET"] == wallet
+        assert env["CREATE_WALLET"] == "0"  # reuse, don't recreate
+        assert env["CHAIN_FLAG"] == flag
+        assert "donations_state:/state" in d["volumes"]
+        assert "donations_state" in compose["volumes"]
+        script = _read(out / net / "donations" / "donations.sh")
+        assert "getreceivedbyaddress" in script and "getbalance" in script
+
+
+def test_donations_sidecar_creates_wallet_on_non_mined(tmp_path):
+    # signet has no miner, so bitcoind has no wallet — the sidecar creates a plain
+    # 'donation' wallet itself.
+    out, _ = _gen(tmp_path, make({"signet": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "signet" / "docker-compose.yml"))
+    env = compose["services"]["donations"]["environment"]
+    assert env["WALLET"] == "donation"
+    assert env["CREATE_WALLET"] == "1"
+    assert env["CHAIN_FLAG"] == "-signet"
+
+
 def test_bitcoin_conf_contents(tmp_path):
     out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OK}}))
     conf = _read(out / "regtest" / "bitcoin" / "bitcoin.conf")
