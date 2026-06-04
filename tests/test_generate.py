@@ -167,6 +167,7 @@ def test_donations_sidecar_reuses_mining_wallet(tmp_path):
         d = compose["services"]["donations"]
         assert d["depends_on"]["bitcoind"]["condition"] == "service_healthy"
         assert d["entrypoint"] == ["/bin/sh", "/scripts/donations.sh"]
+        assert d["user"] == "0:0"  # writes the root-owned state volume
         env = d["environment"]
         assert env["WALLET"] == wallet
         assert env["CREATE_WALLET"] == "0"  # reuse, don't recreate

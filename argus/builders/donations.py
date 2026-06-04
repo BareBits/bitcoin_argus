@@ -131,6 +131,10 @@ def build_donations(ctx: BuildContext) -> Fragment:
         "image": "${BITCOIND_IMAGE}",
         "container_name": f"{ctx.project}-donations",
         "restart": "unless-stopped",
+        # Root so it can write the state volume (created root-owned; the bitcoind
+        # image otherwise runs as a non-root user). It only reads via RPC + writes
+        # its own small JSON, mirroring the lnd-setup sidecar.
+        "user": "0:0",
         "depends_on": {"bitcoind": {"condition": "service_healthy"}},
         "entrypoint": ["/bin/sh", "/scripts/donations.sh"],
         "volumes": [
