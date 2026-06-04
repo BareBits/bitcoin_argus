@@ -49,6 +49,16 @@ def _env_lines(
 
     scheme = "https" if (g.ssl_enabled and bc.ssl) else "http"
     api_url = f"{scheme}://{g.hostname}:{ports['bitcart_api_public']}"
+    # Public origins (bare host:port) of the store and admin/checkout frontends,
+    # which the shared Caddy fronts on their own ports. The store frontend needs
+    # the admin host to send shoppers to the checkout page (/i/<id>, served by the
+    # admin app); the admin needs the store host to link back. Bitcart's built-in
+    # wiring only sets these in its single-domain mode, which our per-port
+    # REVERSEPROXY=none setup bypasses — so without them the store builds the
+    # checkout link on its own origin and the page 404s (blank screen). The
+    # frontends pair the bare host with the page's scheme, so no scheme here.
+    admin_host = f"{g.hostname}:{ports['bitcart_admin_public']}"
+    store_host = f"{g.hostname}:{ports['bitcart_store_public']}"
     challenge = net.signet_challenge or spec.default_signet_challenge
 
     # Raw lnd args for the Neutrino LND: a custom signet needs its challenge.
@@ -71,6 +81,9 @@ def _env_lines(
         "BITCART_BACKEND_PORT": str(ports["bitcart_api"]),
         "BITCART_ADMIN_API_URL": api_url,
         "BITCART_STORE_API_URL": api_url,
+        # cross-frontend origins (store <-> admin/checkout); see note above
+        "BITCART_ADMIN_HOST": admin_host,
+        "BITCART_STORE_HOST": store_host,
         # btclnd (Neutrino LND) — synced against our bitcoind
         "BTCLND_NETWORK": LND_NETWORK_KEY[spec.chain],
         "BTCLND_DEBUG": _bool_env(bc.btclnd_debug).lower(),
