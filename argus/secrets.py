@@ -78,6 +78,32 @@ def load_or_create(
     return values
 
 
+def read_secrets(net_key: str, secrets_root: Path) -> dict[str, str]:
+    """Return a network's persisted secrets WITHOUT creating or rotating any.
+
+    Read-only counterpart to :func:`load_or_create`: returns an empty dict when
+    the network has no ``secrets.env`` yet. Credential surfacing reads through
+    this so it can never generate a value — that would desync what is shown from
+    what is actually deployed.
+    """
+    env_path = secrets_root / net_key / "secrets.env"
+    if not env_path.is_file():
+        return {}
+    return _parse_env(env_path.read_text())
+
+
+def read_onion_hostname(secrets_root: Path) -> str | None:
+    """Return the install's onion hostname if its seed already exists, else None.
+
+    Read-only sibling of :func:`load_or_create_onion_key`, for callers (e.g. the
+    ``credentials`` CLI) that must not create the seed as a side effect.
+    """
+    seed_path = secrets_root / "tor" / "onion_seed.hex"
+    if not seed_path.is_file():
+        return None
+    return OnionKey(bytes.fromhex(seed_path.read_text().strip())).hostname
+
+
 def load_or_create_onion_key(secrets_root: Path) -> OnionKey:
     """Return the installation's single Tor v3 onion key, creating it once.
 

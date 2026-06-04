@@ -10,6 +10,7 @@ from .bitcart import generate_bitcart
 from .builders import REGISTRY
 from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
+from .credentials import generate_credentials
 from .context import BuildContext, Fragment
 from .firewall import generate_firewall
 from .onionkey import OnionKey
@@ -170,5 +171,9 @@ def generate(
 
     # Firewall script opens the public ports across all enabled networks.
     generate_firewall(cfg, port_map, Path(output_dir))
+
+    # Operator-facing admin credentials summary (Bitcart admin today). Read-only
+    # over secrets/, so it is stable across rebuilds and storage-cap resets.
+    generate_credentials(cfg, port_map, secrets_dir, output_dir, onion_hostname)
 
     return dirs

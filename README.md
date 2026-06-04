@@ -85,6 +85,7 @@ pip install -r requirements.txt
 python -m argus validate          # check the config
 python -m argus ports             # review the host-port allocation
 python -m argus generate          # render enabled networks into generated/
+python -m argus credentials       # show admin logins (also written to a file)
 
 # 2. Deploy on the server (copy generated/ across, then per network)
 cd generated/regtest && docker compose up -d         # the core stack
@@ -143,6 +144,26 @@ multi-instance, `REVERSEPROXY=none`, the per-net ports, and attaches its Neutrin
 > (`deploy_bitcart_liquidity_lnd`); and the public service ports must be open in
 > the firewall (see below) — the store/admin SSR also fetches the public API URL.
 
+### Admin login
+
+The Bitcart **admin password is auto-generated** into `secrets/<net>/secrets.env`
+(the email comes from `bitcart.admin_email` in `config.yaml`); the installer
+bootstraps the first admin from these on the network's first deploy. To retrieve
+them once a server is running:
+
+```bash
+python -m argus credentials            # all enabled networks
+python -m argus credentials regtest    # just one
+```
+
+`argus generate` also writes the same listing to **`generated/CREDENTIALS.txt`**
+(mode `0600`, under the gitignored `generated/` tree — never commit it or expose
+it on the public dashboard). Both read straight from `secrets/` and **never
+rotate** anything, so the credentials are **stable across rebuilds and
+storage-cap resets** (a reset leaves `secrets/` untouched and re-uses the same
+Bitcart containers). The Cashu mint runs as an open mint with no login, so it is
+not listed.
+
 ## Testing
 
 ```bash
@@ -152,7 +173,8 @@ pytest
 
 Unit tests cover the deterministic core — config validation, port allocation,
 and the full generation step (compose, `bitcoin.conf`/`lnd.conf`, Cashu/mempool
-env, Caddyfile, firewall, Bitcart env) — and run in CI on every push/PR. A
+env, Caddyfile, firewall, Bitcart env, admin credentials) — and run in CI on
+every push/PR. A
 Docker-gated test additionally validates the generated compose with
 `docker compose config` when Docker is present. Runtime behaviour that needs real
 chains/daemons (sync, Lightning, ACME, Bitcart's installer) is verified by
