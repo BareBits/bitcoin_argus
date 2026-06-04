@@ -23,7 +23,12 @@ from pydantic import (
     model_validator,
 )
 
-from .constants import NETWORK_SPECS, NetworkSpec
+from .constants import (
+    DEFAULT_RESET_CHECK_INTERVAL,
+    DEFAULT_RESET_MAX_SIZE_GB,
+    NETWORK_SPECS,
+    NetworkSpec,
+)
 
 
 class ConfigError(Exception):
@@ -121,6 +126,10 @@ class GlobalConfig(_Base):
     # the read-only Docker-API proxy the dashboard reads live metrics through.
     web_python_image: str = "python:3.12-slim"
     socket_proxy_image: str = "tecnativa/docker-socket-proxy:0.3.0"
+    # Image for the auto-reset controller (needs the docker CLI + compose plugin;
+    # it drives `docker compose down -v/up -d` on the mined networks via the
+    # mounted Docker socket). Only used when a network has reset enabled.
+    reset_controller_image: str = "docker:27-cli"
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
     tor: TorCfg = Field(default_factory=TorCfg)
 
@@ -306,6 +315,24 @@ class MinerCfg(_Base):
     initial_blocks: int = Field(default=101, ge=0)  # coinbase maturity on regtest
 
 
+class ResetCfg(_Base):
+    """Auto-reset a mined network when its chain outgrows a size cap.
+
+    Only meaningful on the networks Argus mines (regtest/custom-signet) — see
+    ``constants.RESET_NETWORKS``. When the network's bitcoind ``size_on_disk``
+    reaches ``max_size_gb``, the whole installation for that network is torn down
+    (``docker compose down -v``) and re-deployed to its base config — wiping all
+    coins, Lightning channels, transactions, mempool/Fulcrum/Cashu state, and
+    Bitcart. ``enabled`` is tri-state: None => on for the mined networks, off
+    elsewhere. (A custom signet keeps its challenge/signing key, so it resets to
+    genesis as the *same* signet.)
+    """
+
+    enabled: bool | None = None
+    max_size_gb: float = Field(default=DEFAULT_RESET_MAX_SIZE_GB, gt=0)
+    check_interval_seconds: int = Field(default=DEFAULT_RESET_CHECK_INTERVAL, ge=1)
+
+
 class NetworkCfg(_Base):
     enabled: bool = False
     prune: int = Field(default=0, ge=0)  # MiB; 0 = no pruning
@@ -319,6 +346,7 @@ class NetworkCfg(_Base):
     indexers: list[IndexerCfg] = Field(default_factory=lambda: [IndexerCfg()])
     mempool: MempoolCfg = Field(default_factory=MempoolCfg)
     miner: MinerCfg = Field(default_factory=MinerCfg)
+    reset: ResetCfg = Field(default_factory=ResetCfg)
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
 
     # Optional host-port overrides keyed by the names in constants.PORT_OFFSETS
@@ -350,6 +378,15 @@ class NetworkCfg(_Base):
         if self.mempool.enabled is None:
             return spec.default_mempool
         return self.mempool.enabled
+
+    def reset_enabled(self, net_key: str) -> bool:
+        """Whether this network is auto-reset on a size cap.
+
+        Tri-state: defaults on for the mined networks (regtest/custom-signet) and
+        off everywhere else. An explicit value always wins (and an explicit True
+        on a non-mined network is rejected in semantic validation)."""
+        v = self.reset.enabled
+        return (net_key in _MINEABLE_NETWORKS) if v is None else v
 
     def lnd_secondary_enabled(self, spec: NetworkSpec) -> bool:
         """Whether a second LND node is deployed.
@@ -534,6 +571,15 @@ class ArgusConfig(_Base):
                         f"({net.lnd.channels.channel_btc}) must be <= fund_btc "
                         f"({net.lnd.channels.fund_btc})"
                     )
+
+            # Auto-reset is only meaningful where Argus drives block production
+            # (it re-mines the base chain after the wipe). It defaults on there
+            # and off elsewhere; reject an explicit enable on other networks.
+            if net.reset.enabled and key not in _MINEABLE_NETWORKS:
+                errors.append(
+                    f"[{key}] reset (auto chain-size reset) is only supported on "
+                    f"networks Argus mines (regtest/custom-signet)"
+                )
 
             # Bitcart requires an admin email; an active liquidity helper needs
             # a cash-out Lightning address.

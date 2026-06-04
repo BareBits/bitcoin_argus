@@ -14,6 +14,7 @@ from .context import BuildContext, Fragment
 from .firewall import generate_firewall
 from .onionkey import OnionKey
 from .ports import allocate
+from .reset import generate_reset
 from .resources import log_options, resolve
 from .secrets import load_or_create, load_or_create_onion_key
 from .shared import generate_shared
@@ -160,6 +161,12 @@ def generate(
     web_dir = generate_web(cfg, output_dir, config_path, onion_hostname)
     if web_dir is not None:
         dirs.append(web_dir)
+
+    # The auto-reset controller + per-network reset scripts (mined networks with
+    # reset enabled). Spans all enabled networks, so generated from full config.
+    reset_dir = generate_reset(cfg, Path(output_dir))
+    if reset_dir is not None:
+        dirs.append(reset_dir)
 
     # Firewall script opens the public ports across all enabled networks.
     generate_firewall(cfg, port_map, Path(output_dir))

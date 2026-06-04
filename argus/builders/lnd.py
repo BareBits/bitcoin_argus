@@ -51,15 +51,28 @@ def _sanitize_arg(arg: str) -> str:
     return arg.strip()
 
 
-def _lnd_tor_on(ctx: BuildContext) -> bool:
-    """Whether this node advertises an onion address and dials peers over Tor.
+def _lnd_advertise_onion(ctx: BuildContext) -> bool:
+    """Whether the LND node(s) advertise the installation's onion in gossip.
 
-    Requires the shared onion to exist (Tor enabled) and LND P2P to be exposed on
-    it. Drives both the gossip advertisement (``externalip=<onion>:<port>``) and
-    the ``[Tor]`` section / SOCKS wiring below.
-    """
+    Requires the shared onion (Tor enabled) and LND P2P exposed on it. BOTH nodes
+    advertise it via ``externalip=<onion>:<port>``, so either is reachable
+    *inbound* over Tor — the shared hidden service forwards onion traffic to the
+    node's P2P listener. This is independent of whether the node dials *out* over
+    Tor (see :func:`_lnd_dials_over_tor`)."""
     tor = ctx.cfg.global_.tor
     return bool(tor.enabled and tor.expose_lnd_p2p and ctx.onion_hostname)
+
+
+def _lnd_dials_over_tor(ctx: BuildContext, node: _Node) -> bool:
+    """Whether THIS node runs in Tor mode (``tor.active`` — can dial .onion peers).
+
+    Only the secondary node (``lnd2``) does. The primary (``lnd``) stays
+    clearnet-only outbound so its dials never route through Tor — reliable, and it
+    can reach private Docker hostnames (which Tor cannot resolve). Both nodes stay
+    reachable *inbound* over Tor via the advertised onion; the split only affects
+    which node can *initiate* connections to .onion peers. See the README's Tor
+    section."""
+    return _lnd_advertise_onion(ctx) and node.service == "lnd2"
 
 
 def _nodes(ctx: BuildContext) -> list[_Node]:
@@ -130,10 +143,11 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
         # Advertise a reachable address in gossip so peers can auto-connect and
         # open channels to us, instead of needing the URI hand-fed.
         lines.append(f"externalip={ctx.cfg.global_.hostname}:{ctx.ports[node.p2p_key]}")
-    if _lnd_tor_on(ctx):
+    if _lnd_advertise_onion(ctx):
         # Also advertise the installation's onion (same node, its P2P port) so
-        # peers can open channels to us over Tor. This is what lands in the node's
-        # gossip announcement and propagates onto the local mempool node page.
+        # peers can open channels to us over Tor. BOTH nodes advertise it (both are
+        # reachable inbound over Tor); it lands in the gossip announcement and
+        # propagates onto the local mempool node page.
         lines.append(f"externalip={ctx.onion_hostname}:{ctx.ports[node.p2p_key]}")
     if net.lnd.min_chan_size is not None:
         lines.append(f"minchansize={net.lnd.min_chan_size}")
@@ -170,7 +184,12 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
         f"bitcoind.zmqpubrawblock=tcp://bitcoind:{ZMQ_BLOCK_INTERNAL}",
         f"bitcoind.zmqpubrawtx=tcp://bitcoind:{ZMQ_TX_INTERNAL}",
     ]
-    if _lnd_tor_on(ctx):
+    if _lnd_dials_over_tor(ctx, node):
+        # Secondary node only: run in Tor mode so it can DIAL .onion peers. Reach
+        # clearnet/private targets directly and use Tor only for .onion — but note
+        # LND still routes bare *hostnames* through the proxy, so the channel
+        # sidecar dials this node's siblings by IP (see channels.sh). It does NOT
+        # mint its own onion (no tor.v3): it advertises our shared one.
         lines += [
             "",
             "[Tor]",
@@ -178,9 +197,6 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
             # The host-networked shared tor container's SOCKS proxy, reached via an
             # /etc/hosts alias pointed at the host gateway (see the service block).
             f"tor.socks={TOR_SOCKS_HOST_ALIAS}:{TOR_SOCKS_PORT}",
-            # Reach clearnet targets (bitcoind, clearnet peers) directly and use
-            # Tor only for .onion peers — keeps the node dual-stack, and it does
-            # NOT mint its own onion (no tor.v3): it advertises our shared one.
             "tor.skip-proxy-for-clearnet-targets=true",
         ]
     return "\n".join(lines) + "\n"
@@ -224,10 +240,11 @@ def _node_service(ctx: BuildContext, node: _Node) -> dict:
     }
     if ctx.net.lnd.extra_env:
         service["environment"] = dict(ctx.net.lnd.extra_env)
-    if _lnd_tor_on(ctx):
-        # Reach the host-networked tor SOCKS proxy from this bridged container via
-        # the host gateway. SOCKS itself is firewalled off the public internet and
-        # further restricted by tor's SocksPolicy (private ranges only).
+    if _lnd_dials_over_tor(ctx, node):
+        # Secondary node only: reach the host-networked tor SOCKS proxy from this
+        # bridged container via the host gateway. SOCKS itself is firewalled off
+        # the public internet and further restricted by tor's SocksPolicy (private
+        # ranges only).
         service["extra_hosts"] = [f"{TOR_SOCKS_HOST_ALIAS}:host-gateway"]
     return service
 
@@ -367,6 +384,13 @@ until $L2 getinfo >/dev/null 2>&1; do sleep 3; done
 
 pk()  { eval "\\$$1 getinfo" | grep -o '"identity_pubkey": *"[0-9a-f]*"' \
         | grep -oE '[0-9a-f]{66}'; }
+# Resolve a peer service name to its container IP and append the P2P port. We
+# connect by IP (not hostname) because the secondary node runs in Tor mode, and a
+# Tor-mode LND would route a bare hostname through the proxy (failing on a private
+# Docker name); an IP literal is dialed directly (tor.skip-proxy-for-clearnet-
+# targets). Harmless for the clearnet-only primary. Falls back to the name.
+addr() { _ip=$(getent hosts "$1" 2>/dev/null | awk '{print $1; exit}'); \
+         echo "${_ip:-$1}:${P2P}"; }
 conf() { eval "\\$$1 walletbalance" | grep -o '"confirmed_balance": *"[0-9]*"' \
         | grep -oE '[0-9]+' | head -1; }
 
@@ -389,8 +413,8 @@ open_dir() {  # caller_var marker peer_pubkey peer_host
   touch "${STATE}/$2"
 }
 
-open_dir L1 chan_l1 "$P2" "lnd2:${P2P}"
-open_dir L2 chan_l2 "$P1" "lnd:${P2P}"
+open_dir L1 chan_l1 "$P2" "$(addr lnd2)"
+open_dir L2 chan_l2 "$P1" "$(addr lnd)"
 
 touch "${STATE}/channels"
 echo "[lnd-channels] channel setup complete"

@@ -196,6 +196,43 @@ def test_build_sections_enabled_and_disabled():
     assert not t4.enabled and not t4.services  # disabled: section but no table
 
 
+def test_build_sections_reset_info():
+    cfg = validated(
+        make(
+            {
+                "regtest": {"enabled": True, "bitcart": BITCART_OFF},
+                "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+                "testnet4": {"enabled": False, "bitcart": BITCART_OFF},
+            }
+        )
+    )
+    port_map = allocate(cfg)
+    metrics = {
+        "usage": {},
+        "host": {},
+        "reset": {
+            # regtest has a live size -> a countdown; custom-signet has none yet.
+            "regtest": {
+                "size_on_disk": 5_000_000_000,
+                "limit_bytes": 30 * 1024**3,
+                "block_interval_seconds": 60,
+                "max_size_gb": 30,
+            }
+        },
+    }
+    by_key = {s.key: s for s in build_sections(cfg, port_map, metrics)}
+
+    rt = by_key["regtest"].reset
+    assert rt is not None and rt.known and rt.eta_text  # "X days, Y hours"
+    assert rt.cap_text == "30"
+
+    cs = by_key["custom-signet"].reset
+    assert cs is not None and not cs.known and cs.eta_text is None
+
+    # Disabled / non-mined networks carry no reset banner.
+    assert by_key["testnet4"].reset is None
+
+
 def test_lnd_pubkey_uri_and_mempool_link():
     cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     port_map = allocate(cfg)

@@ -24,13 +24,18 @@ global:
   # Tor: expose the WHOLE installation behind a single v3 onion address. Routing
   # is by port — each sub-tool answers on the same port it uses on clearnet, just
   # on the onion host. Operator-only ports (Core RPC, LND gRPC/REST) stay private.
-  # The LND node(s) also advertise their onion so peers can open channels over Tor.
+  # The LND nodes advertise this onion so peers can reach them over Tor. On the
+  # two-node (mined) networks the roles split: the primary (argus1) is clearnet-
+  # only outbound (reliable; cannot dial .onion peers), while the secondary
+  # (argus2) runs in Tor mode and CAN open channels out to .onion peers. Both
+  # nodes accept inbound channels from anyone, Tor or clearnet. See README "Tor".
   tor:
     enabled: false                # opt-in; set true to stand up the onion
     # image: lncm/tor:0.4.7.13    # tor container image (override for your arch)
     # expose_web: true            # mempool / cashu / bitcart frontends + dashboard
     # expose_electrum: true       # public Fulcrum Electrum ports
-    # expose_lnd_p2p: true        # LND P2P (also drives onion advertisement)
+    # expose_lnd_p2p: true        # LND P2P over the onion (both nodes reachable
+    #                             # inbound; only argus2 dials out over Tor)
     # expose_bitcoind_p2p: true   # bitcoind P2P (only where already public)
 
 # The dashboard: a web server (fronted by the shared Caddy) that welcomes
@@ -56,6 +61,14 @@ networks:
       enabled: true
       block_interval_seconds: 60  # one new block per minute
       initial_blocks: 101         # coinbase maturity before steady state
+    reset:
+      # Auto-reset when the chain outgrows the cap. Defaults on for the mined
+      # networks (regtest + custom-signet). When bitcoind's on-disk size reaches
+      # max_size_gb the whole network is torn down and re-deployed to base config
+      # (all coins, Lightning channels, transactions, and tool state are wiped).
+      enabled: true
+      max_size_gb: 30             # cap on bitcoind size_on_disk (GiB)
+      # check_interval_seconds: 300  # how often the controller polls the size
     mempool:
       enabled: true               # no public explorer exists for regtest
     bitcart:
@@ -92,6 +105,10 @@ networks:
     miner:
       enabled: true               # Argus signs + mines blocks for this signet
       block_interval_seconds: 60  # one signed block per minute
+    reset:
+      enabled: true               # auto-reset on size cap (keeps the signet's
+      max_size_gb: 30             # challenge/key — resets to genesis as the
+                                  # SAME custom signet, just wiped to base config)
     bitcart:
       admin_email: admin@example.com
       liquidity:
@@ -129,6 +146,10 @@ networks:
 #   mempool:  { enabled, ssl, statistics, lightning }  # statistics default true
 #             (biggest DB grower; set false to save disk); lightning default true
 #             (indexes the local LND graph)
+#   reset:    { enabled, max_size_gb, check_interval_seconds }     # mined nets only
+#             # auto tear-down + re-deploy to base config when the chain's
+#             # size_on_disk reaches max_size_gb (default 30). enabled defaults on
+#             # for regtest/custom-signet, off elsewhere (rejected if set there).
 #   resources: { profile, log_rotation, bitcoind_dbcache, bitcoind_maxmempool,
 #                fulcrum_db_mem, fulcrum_db_max_open_files,
 #                mempool_mariadb_buffer_mb }  # per-network override of global

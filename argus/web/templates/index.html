@@ -131,6 +131,23 @@
   </summary>
   <p class="blurb">{{ s.variant.blurb }}</p>
 
+  {% if s.reset %}
+  <div class="reset-warning" role="note">
+    <span class="reset-icon" aria-hidden="true">⏳</span>
+    <span class="reset-text">
+      {% if s.reset.known %}
+        Network resets in <strong>{{ s.reset.eta_text }}</strong>
+      {% else %}
+        Network auto-resets at <strong>{{ s.reset.cap_text }} GB</strong> (estimating…)
+      {% endif %}
+    </span>
+    <span class="reset-help" tabindex="0" role="button"
+          aria-label="What does the reset countdown mean?">?<span class="reset-pop">This network <strong>automatically resets</strong> every {{ s.reset.cap_text }} GB. When it
+      does, it is wiped back to its base config and <strong>all old coins, Lightning
+      channels, and transactions become invalid</strong>.</span></span>
+  </div>
+  {% endif %}
+
   <div class="proscons">
     <div class="pros">
       <h4>Pros</h4>

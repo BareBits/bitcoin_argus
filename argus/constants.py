@@ -198,6 +198,32 @@ DEFAULT_LOG_MAX_SIZE = "10m"
 DEFAULT_LOG_MAX_FILE = 3
 
 
+# --- Auto-reset (chain size cap) --------------------------------------------
+
+# Networks Argus mines, and so can tear down and re-deploy to base config when
+# their chain grows past a configured cap. Resetting a chain we don't control
+# (the real testnets / public signet) would be meaningless, so reset is only
+# offered here. Mirrors config._MINEABLE_NETWORKS.
+RESET_NETWORKS: frozenset[str] = frozenset({"regtest", "custom-signet"})
+
+# Default cap on a mined network's on-disk chain size (GiB) before it is reset.
+DEFAULT_RESET_MAX_SIZE_GB = 30.0
+# How often the reset controller polls each network's size_on_disk (seconds).
+DEFAULT_RESET_CHECK_INTERVAL = 300
+
+# "Maximum use of all blocks" assumption for the time-to-reset estimate: every
+# block mined at the consensus maximum serialized size (~4 MB at full weight).
+# Growth/day = (86400 / block_interval_seconds) * MAX_BLOCK_BYTES; the estimate
+# is deliberately conservative (fastest plausible growth -> soonest reset).
+MAX_BLOCK_BYTES = 4_000_000
+
+# The reset controller's container name + where it writes the per-network
+# size/cap JSON the dashboard reads (via the read-only docker-socket-proxy
+# get_archive, like donations/LND info).
+RESET_CONTROLLER_CONTAINER = "argus-reset-controller"
+RESET_STATE_FILE = "/state/reset_state.json"
+
+
 # Argus chain -> mempool's network slot. The real testnets use their native slot
 # so the explorer labels them correctly and shows mempool's built-in "test coins
 # have no value" warning (custom-signet + mutinynet share chain="signet" and so

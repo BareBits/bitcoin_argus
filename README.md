@@ -21,6 +21,7 @@ that network.
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **mempool** | Block explorer | HTTP via shared proxy |
 | **miner** (regtest / custom-signet) | Produces a (signed, for signet) block every minute | — |
+| **reset controller** (mined nets) | Auto-resets a network when its chain outgrows a cap | none (Docker socket only) |
 
 A single host-level **Caddy** terminates TLS for all HTTP services across all
 networks (one certificate for the shared hostname; services differ by port).
@@ -29,6 +30,29 @@ A host-level **dashboard** (`generated/web/`) serves the welcome page at the sit
 root (`https://<hostname>/`) and reports live, per-service disk/RAM usage. See
 [Dashboard](#dashboard).
 
+### Auto-reset
+
+The mined networks (regtest + custom-signet) grow without bound as blocks are
+produced. To keep disk in check, each has an optional **size cap** (`reset.max_size_gb`,
+default **30 GB**, on by default). When a network's on-disk chain
+(`getblockchaininfo.size_on_disk`) reaches the cap, the whole installation for
+that network is torn down (`docker compose down -v`) and re-deployed to its base
+config — wiping every coin, Lightning channel, transaction, and the
+mempool/Fulcrum/Cashu/Bitcart state with it. A custom signet keeps its challenge
++ signing key (`secrets/` is untouched), so it resets to genesis as the *same*
+signet.
+
+`generated/reset/` is a small controller compose project — one container, the
+only thing granted read-write Docker socket access — that polls each network's
+size and runs that network's `generated/<net>/reset.sh` at the cap. It also
+publishes the figures the dashboard uses to show a **"resets in X days, Y hours"**
+countdown (estimated assuming every block is mined at the ~4 MB consensus maximum,
+i.e. the soonest plausible reset) with a tooltip explaining the policy. An
+operator can also run a `reset.sh` by hand at any time. The controller mounts the
+generated tree at its identical host path, so it must be started with
+`ARGUS_DEPLOY_ROOT` pointing at the absolute path of `generated/` (see step 3 of
+the deploy commands above).
+
 ## How it works
 
 ```
@@ -36,7 +60,8 @@ config.yaml ──► argus (validate ─► allocate ports ─► render) ─�
                                                                    ├── docker-compose.yml
                                                                    ├── .env            (gitignored)
                                                                    ├── bitcoin/bitcoin.conf
-                                                                   └── miner/mine.sh
+                                                                   ├── miner/mine.sh
+                                                                   └── reset.sh        (mined nets)
 ```
 
 The CLI only *generates* plain Docker Compose files; you deploy them with
@@ -67,6 +92,10 @@ bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy
 cd generated/web && docker compose up -d --build       # the dashboard (builds its image)
 sudo bash generated/firewall.sh                       # open the public ports
+
+# 3. (Optional) Auto-reset controller for the mined networks — see Auto-reset.
+#    ARGUS_DEPLOY_ROOT must be the ABSOLUTE host path to generated/.
+cd generated/reset && ARGUS_DEPLOY_ROOT="$(cd .. && pwd)" docker compose up -d --build
 ```
 
 On **regtest**, two LND nodes (`argus1` + `argus2`) come up, get funded 25 BTC
@@ -223,15 +252,38 @@ Tor is also a good way to test your app's robustness on higher-latency, less
 reliable links. (Caveat: Bitcart is reachable over Tor but not fully
 onion-native — some of its pages build absolute clearnet links.)
 
+### The two LND nodes under Tor (inbound vs. dialing out)
+
+A subtlety worth knowing on the two-node (mined) networks: **being reachable over
+Tor and *using* Tor to dial out are separate things.** When `tor.active` is on,
+LND routes outbound connections — including bare hostnames — through the SOCKS
+proxy to avoid DNS leaks; it can't reach a private Docker hostname that way, only
+`.onion` and direct-IP targets. So Argus splits the roles:
+
+- **`argus1` (primary)** runs **clearnet-only outbound** (no `tor.active`). It
+  still advertises the onion, so anyone can connect to it over Tor — it just
+  can't *initiate* connections to `.onion`-only peers. Use it for everyday work:
+  its outbound connectivity is direct and reliable.
+- **`argus2` (secondary)** runs in **Tor mode** (`tor.active`). Use it when you
+  want to **open a channel out to a node that's only reachable over Tor**.
+
+Regardless of these settings, **any other node — over Tor or clearnet — can
+connect to and open a channel with either of our nodes**; the Tor restriction
+only governs *dialing out*. (The auto-channel sidecar connects the two nodes by
+resolved container **IP** for exactly this reason — a hostname would be sent
+through Tor by `argus2` and fail.) If you don't run Tor, both nodes are plain
+clearnet and this distinction doesn't apply.
+
 `global.tor` toggles `expose_web` / `expose_electrum` / `expose_lnd_p2p` /
 `expose_bitcoind_p2p` narrow the surface without disabling Tor; `image` overrides
 the tor container image.
 
-**Deploy order matters with `expose_lnd_p2p`:** LND runs in hybrid Tor mode, so
-it reaches the shared tor container's SOCKS proxy through the host gateway. Bring
-up `generated/shared-tor/` **and** run `generated/firewall.sh` (which opens the
-Docker-bridge → SOCKS path) **before** the per-network stacks — otherwise LND
-can't reach the proxy and will restart-loop validating its onion `externalip`.
+**Deploy order matters with `expose_lnd_p2p`:** the secondary node (`argus2`)
+runs in Tor mode and reaches the shared tor container's SOCKS proxy through the
+host gateway. Bring up `generated/shared-tor/` **and** run `generated/firewall.sh`
+(which opens the Docker-bridge → SOCKS path) **before** the per-network stacks —
+otherwise `argus2` can't reach the proxy at startup and will restart-loop. The
+primary (`argus1`) is clearnet-only outbound, so it has no such dependency.
 
 ## Per-network notes
 
