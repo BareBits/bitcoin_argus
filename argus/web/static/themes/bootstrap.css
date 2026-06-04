@@ -149,3 +149,10 @@ h1, h2, h3, h4 { color: var(--fg); font-weight: 600; }
 details[open] > summary > .caret { transform: rotate(90deg); }
 .picker > summary:hover .caret, .net-section > summary:hover .caret,
 .access-model > summary:hover .caret, .host-totals > summary:hover .caret { border-left-color: var(--primary); }
+
+/* Network-picker columns + Tor accessibility */
+.when-cols { margin-top: 0.6rem; }
+.when-col.when-local { border: 1px solid var(--primary); border-radius: .375rem; background: rgba(13, 110, 253, 0.04); }
+.tor-access { padding: .6rem 1rem 1rem; border-top: 1px solid var(--border); }
+.tor-access h4 { color: var(--primary); margin: .6rem 0 .4rem; }
+.tor-table { margin: .6rem 0; }

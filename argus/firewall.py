@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import ArgusConfig
-from .constants import NETWORK_SPECS
+from .constants import NETWORK_SPECS, TOR_SOCKS_PORT
 
 
 def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[tuple]:
@@ -79,6 +79,17 @@ def render_firewall(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> st
             lines.append(f"ufw allow {web_port}/tcp comment 'argus dashboard'")
     for port, comment in _public_rules(cfg, port_map):
         lines.append(f"ufw allow {port}/tcp comment '{comment}'")
+
+    # Tor: the onion service needs NO inbound rule (its circuits are outbound).
+    # When LND advertises over Tor it reaches the shared tor container's SOCKS
+    # proxy via the host gateway, so allow only the private Docker bridge range to
+    # that one port; the default-deny policy still blocks it from the internet.
+    tor = cfg.global_.tor
+    if tor.enabled and tor.expose_lnd_p2p:
+        lines.append(
+            f"ufw allow from 172.16.0.0/12 to any port {TOR_SOCKS_PORT} proto tcp "
+            f"comment 'argus lnd -> tor socks (docker bridge only)'"
+        )
     lines += [
         "",
         "ufw reload",

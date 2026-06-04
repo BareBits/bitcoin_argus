@@ -30,6 +30,9 @@ class BuildContext:
     out_dir: Path  # generated/<net_key>; builders may write aux files here
     project: str  # docker compose project name, e.g. "argus-regtest"
     resources: ResolvedResources  # effective disk/RAM settings for this network
+    # The installation's single .onion hostname when Tor is enabled, else None.
+    # Threaded in so LND can advertise its onion address in gossip.
+    onion_hostname: str | None = None
 
     @property
     def network_name(self) -> str:

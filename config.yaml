@@ -21,6 +21,17 @@ global:
     # bitcoind_dbcache: 300         # MiB     bitcoind_maxmempool: 100   # MB
     # fulcrum_db_mem: 600           # MiB     fulcrum_db_max_open_files: 200
     # mempool_mariadb_buffer_mb: 128
+  # Tor: expose the WHOLE installation behind a single v3 onion address. Routing
+  # is by port — each sub-tool answers on the same port it uses on clearnet, just
+  # on the onion host. Operator-only ports (Core RPC, LND gRPC/REST) stay private.
+  # The LND node(s) also advertise their onion so peers can open channels over Tor.
+  tor:
+    enabled: false                # opt-in; set true to stand up the onion
+    # image: lncm/tor:0.4.7.13    # tor container image (override for your arch)
+    # expose_web: true            # mempool / cashu / bitcart frontends + dashboard
+    # expose_electrum: true       # public Fulcrum Electrum ports
+    # expose_lnd_p2p: true        # LND P2P (also drives onion advertisement)
+    # expose_bitcoind_p2p: true   # bitcoind P2P (only where already public)
 
 # The dashboard: a web server (fronted by the shared Caddy) that welcomes
 # visitors and reports live, per-service resource usage. It serves at the site

@@ -22,6 +22,8 @@ from ..constants import (
     LND_CHANNEL_CORE_RESERVE_BTC,
     LND_INTERNAL_PORTS,
     LND_NETWORK_KEY,
+    TOR_SOCKS_HOST_ALIAS,
+    TOR_SOCKS_PORT,
     ZMQ_BLOCK_INTERNAL,
     ZMQ_TX_INTERNAL,
 )
@@ -47,6 +49,17 @@ def _sanitize_arg(arg: str) -> str:
     if "\n" in arg or "\r" in arg:
         raise ValueError(f"lnd extra_arg contains a newline: {arg!r}")
     return arg.strip()
+
+
+def _lnd_tor_on(ctx: BuildContext) -> bool:
+    """Whether this node advertises an onion address and dials peers over Tor.
+
+    Requires the shared onion to exist (Tor enabled) and LND P2P to be exposed on
+    it. Drives both the gossip advertisement (``externalip=<onion>:<port>``) and
+    the ``[Tor]`` section / SOCKS wiring below.
+    """
+    tor = ctx.cfg.global_.tor
+    return bool(tor.enabled and tor.expose_lnd_p2p and ctx.onion_hostname)
 
 
 def _nodes(ctx: BuildContext) -> list[_Node]:
@@ -117,6 +130,11 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
         # Advertise a reachable address in gossip so peers can auto-connect and
         # open channels to us, instead of needing the URI hand-fed.
         lines.append(f"externalip={ctx.cfg.global_.hostname}:{ctx.ports[node.p2p_key]}")
+    if _lnd_tor_on(ctx):
+        # Also advertise the installation's onion (same node, its P2P port) so
+        # peers can open channels to us over Tor. This is what lands in the node's
+        # gossip announcement and propagates onto the local mempool node page.
+        lines.append(f"externalip={ctx.onion_hostname}:{ctx.ports[node.p2p_key]}")
     if net.lnd.min_chan_size is not None:
         lines.append(f"minchansize={net.lnd.min_chan_size}")
     if net.lnd.auto_compact:
@@ -152,6 +170,19 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
         f"bitcoind.zmqpubrawblock=tcp://bitcoind:{ZMQ_BLOCK_INTERNAL}",
         f"bitcoind.zmqpubrawtx=tcp://bitcoind:{ZMQ_TX_INTERNAL}",
     ]
+    if _lnd_tor_on(ctx):
+        lines += [
+            "",
+            "[Tor]",
+            "tor.active=true",
+            # The host-networked shared tor container's SOCKS proxy, reached via an
+            # /etc/hosts alias pointed at the host gateway (see the service block).
+            f"tor.socks={TOR_SOCKS_HOST_ALIAS}:{TOR_SOCKS_PORT}",
+            # Reach clearnet targets (bitcoind, clearnet peers) directly and use
+            # Tor only for .onion peers — keeps the node dual-stack, and it does
+            # NOT mint its own onion (no tor.v3): it advertises our shared one.
+            "tor.skip-proxy-for-clearnet-targets=true",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -193,6 +224,11 @@ def _node_service(ctx: BuildContext, node: _Node) -> dict:
     }
     if ctx.net.lnd.extra_env:
         service["environment"] = dict(ctx.net.lnd.extra_env)
+    if _lnd_tor_on(ctx):
+        # Reach the host-networked tor SOCKS proxy from this bridged container via
+        # the host gateway. SOCKS itself is firewalled off the public internet and
+        # further restricted by tor's SocksPolicy (private ranges only).
+        service["extra_hosts"] = [f"{TOR_SOCKS_HOST_ALIAS}:host-gateway"]
     return service
 
 

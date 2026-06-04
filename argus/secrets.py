@@ -12,6 +12,7 @@ import secrets as _secrets
 from pathlib import Path
 from typing import Callable
 
+from .onionkey import OnionKey
 from .signetkey import generate_signet_key
 
 # name -> generator(net_key). token_hex(32) yields 64 shell-safe hex chars.
@@ -75,3 +76,25 @@ def load_or_create(
         env_path.chmod(0o600)
 
     return values
+
+
+def load_or_create_onion_key(secrets_root: Path) -> OnionKey:
+    """Return the installation's single Tor v3 onion key, creating it once.
+
+    Unlike the per-network secrets, the onion identity is install-wide: one
+    address fronts every sub-tool (routing is by port). The 32-byte ed25519 seed
+    is persisted under ``secrets/tor/`` so the ``.onion`` address is stable across
+    regenerations; the key files Tor reads are derived from it deterministically.
+    """
+    tor_dir = secrets_root / "tor"
+    seed_path = tor_dir / "onion_seed.hex"
+
+    if seed_path.is_file():
+        seed = bytes.fromhex(seed_path.read_text().strip())
+    else:
+        seed = _secrets.token_bytes(32)
+        tor_dir.mkdir(parents=True, exist_ok=True)
+        seed_path.write_text(seed.hex() + "\n")
+        seed_path.chmod(0o600)
+
+    return OnionKey(seed)
