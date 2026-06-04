@@ -64,6 +64,19 @@ class ServiceRow:
 
 
 @dataclass
+class DonationRow:
+    """One row in the "donate / recycle your coins" table: the public donation
+    address for a network plus its lifetime received and current wallet balance.
+    Figures are BTC strings as bitcoind reports them; None => not available yet."""
+
+    key: str
+    title: str
+    address: str | None = None
+    total_received: str | None = None
+    balance: str | None = None
+
+
+@dataclass
 class NetworkSection:
     key: str
     title: str
@@ -207,6 +220,33 @@ def _service_rows(
             )
         )
 
+    return rows
+
+
+def build_donations(cfg: ArgusConfig, metrics: dict) -> list[DonationRow]:
+    """One donation row per *enabled* network, in the recommended order.
+
+    Each network runs a single bitcoind wallet (the miner's where there is one);
+    the sidecar publishes that wallet's donation address, its lifetime received,
+    and its current balance (see :mod:`argus.builders.donations`). Rows render
+    even before the sidecar has reported — the figures just show as pending.
+    """
+    data = metrics.get("donations") or {}
+    rows: list[DonationRow] = []
+    for net_key in VARIANT_ORDER:
+        net = cfg.networks.get(net_key)
+        if net is None or not net.enabled:
+            continue
+        info = data.get(net_key) or {}
+        rows.append(
+            DonationRow(
+                key=net_key,
+                title=VARIANTS[net_key].title,
+                address=info.get("address"),
+                total_received=info.get("total_received"),
+                balance=info.get("balance"),
+            )
+        )
     return rows
 
 

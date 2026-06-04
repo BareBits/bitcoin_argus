@@ -14,7 +14,7 @@ from argus.firewall import render_firewall
 from argus.ports import allocate
 from argus.shared import render_caddyfile, web_public_port
 from argus.web import cache, metrics
-from argus.web.inventory import build_sections
+from argus.web.inventory import build_donations, build_sections
 from argus.web_gen import generate_web
 
 from helpers import BITCART_OFF, make, validated
@@ -314,6 +314,87 @@ def test_no_lnd_link_or_uri_without_pubkey():
     lnd = next(s for s in section.services if s.bucket == "lnd")
     assert lnd.links == []
     assert not any("lncli connect" in a.command for a in section.attach)
+
+
+# --- donations --------------------------------------------------------------
+
+
+def test_build_donations_only_enabled_in_order():
+    cfg = validated(make({
+        "signet": {"enabled": True, "bitcart": BITCART_OFF},
+        "regtest": {"enabled": True, "bitcart": BITCART_OFF},
+        "testnet4": {"enabled": False, "bitcart": BITCART_OFF},
+    }))
+    metrics_payload = {"donations": {
+        "regtest": {"address": "bcrt1qabc", "total_received": "1.50000000",
+                    "balance": "0.25000000"},
+    }}
+    rows = build_donations(cfg, metrics_payload)
+    # Disabled networks are excluded; enabled ones follow the recommended order
+    # (regtest before signet).
+    assert [r.key for r in rows] == ["regtest", "signet"]
+
+    rt = rows[0]
+    assert rt.address == "bcrt1qabc"
+    assert rt.total_received == "1.50000000" and rt.balance == "0.25000000"
+
+    # A network with no sidecar report yet renders with empty figures (the
+    # template shows "pending…"), not an error.
+    sg = rows[1]
+    assert sg.address is None and sg.total_received is None and sg.balance is None
+
+
+def test_build_donations_tolerates_missing_key():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    assert build_donations(cfg, {}) and build_donations(cfg, {})[0].address is None
+
+
+def test_collect_reads_donation_file(monkeypatch):
+    # The dashboard reads the donations JSON from the sidecar via get_archive
+    # (a GET allowed by the read-only socket proxy), exactly like LND pubkeys.
+    import io
+    import json
+    import tarfile
+
+    def fake_archive(payload: dict):
+        raw = json.dumps(payload).encode()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            info = tarfile.TarInfo("donations.json")
+            info.size = len(raw)
+            tf.addfile(info, io.BytesIO(raw))
+        return [buf.getvalue()], {}
+
+    class FakeContainer:
+        def __init__(self, name):
+            self.name = name
+
+        def get_archive(self, path):
+            assert path == "/state/donations.json"
+            return fake_archive({"address": "bcrt1qxyz",
+                                 "total_received": "2.00000000",
+                                 "balance": "0.40000000"})
+
+    class FakeClient:
+        def df(self):
+            return {"Volumes": [], "Containers": []}
+
+    client = FakeClient()
+    client.containers = types.SimpleNamespace(
+        list=lambda: [],
+        get=lambda name: FakeContainer(name) if name.endswith("-donations")
+        else (_ for _ in ()).throw(Exception("no such container")),
+    )
+    fake_docker = types.ModuleType("docker")
+    fake_docker.from_env = lambda: client
+    monkeypatch.setitem(sys.modules, "docker", fake_docker)
+
+    result = metrics.collect(["regtest"]).as_dict()
+    assert result["donations"]["regtest"] == {
+        "address": "bcrt1qxyz",
+        "total_received": "2.00000000",
+        "balance": "0.40000000",
+    }
 
 
 # --- "which network" picker columns + Tor accessibility ---------------------

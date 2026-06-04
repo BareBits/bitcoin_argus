@@ -213,3 +213,7 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 .tor-access h4 { color: var(--accent); margin: 0.6rem 0 0.4rem; }
 .tor-table { margin: 0.6rem 0; }
 .attach-onion code, .tor-access code { color: var(--accent); }
+
+/* Donate / recycle section */
+.donate-addr { word-break: break-all; font-size: 0.85rem; }
+.donate .pending { opacity: 0.6; font-style: italic; }
