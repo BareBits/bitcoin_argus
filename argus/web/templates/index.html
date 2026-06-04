@@ -120,33 +120,6 @@
 </details>
 {% endif %}
 
-{% if onion_hostname %}
-<details class="host-totals tor-intro" open>
-  <summary><span class="caret"></span><h2>🧅 Tor accessibility</h2></summary>
-  <p>
-    This whole installation is reachable over a <strong>single Tor v3 onion
-    address</strong>. There's nothing per-service to remember: routing is by
-    <em>port</em>, so each sub-tool answers on the same port it uses on
-    clearnet — just on the onion host instead. Visit an HTTP service in the Tor
-    Browser, or point a Tor-aware client (e.g. <code>torsocks</code>) at the
-    onion for the TCP services.
-  </p>
-  <pre class="cmd">{{ onion_hostname }}</pre>
-  <p class="attach-note">
-    Each service link in the network tables below shows a 🧅 — click it to copy
-    that tool's full onion URL. Reaching these tools over Tor is also a great way
-    to test your application's <strong>robustness in less reliable network
-    environments</strong>: onion circuits add real latency, jitter and occasional
-    drops, surfacing timeout and retry bugs that a fast local link hides.
-  </p>
-  <p class="attach-note">
-    One caveat: Bitcart is reachable over Tor but isn't fully onion-native — some
-    of its pages build absolute links from the clearnet hostname, so they may
-    point back to the clearnet site.
-  </p>
-</details>
-{% endif %}
-
 {% for s in sections %}
 <details class="net-section{% if not s.enabled %} disabled{% endif %}" id="{{ s.key }}" open>
   <summary class="net-head">
@@ -213,12 +186,9 @@
     {% for a in vis %}
     <div class="attach-item attach-visitor">
       <div class="attach-label">{{ a.label }}</div>
-      <pre class="cmd">{{ a.command }}</pre>
+      <pre class="cmd">{{ a.command }}{% if a.command_onion %}
+🧅 {{ a.command_onion }}{% endif %}</pre>
       {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
-      {% if a.command_onion %}
-      <pre class="cmd cmd-onion">🧅 {{ a.command_onion }}</pre>
-      {% if a.note_onion %}<div class="attach-note">{{ a.note_onion }}</div>{% endif %}
-      {% endif %}
     </div>
     {% endfor %}
   </div>
@@ -226,6 +196,32 @@
   {% endif %}
 </details>
 {% endfor %}
+
+{% if onion_hostname %}
+<details class="host-totals tor-intro" open>
+  <summary><span class="caret"></span><h2>🧅 Tor accessibility</h2></summary>
+  <p>
+    This whole installation is reachable over a <strong>single Tor v3 onion
+    address</strong> — <code>{{ onion_hostname }}</code>. There's nothing
+    per-service to remember: routing is by <em>port</em>, so each sub-tool answers
+    on the same port it uses on clearnet — just on the onion host instead. Visit
+    an HTTP service in the Tor Browser, or point a Tor-aware client (e.g.
+    <code>torsocks</code>) at the onion for the TCP services.
+  </p>
+  <p class="attach-note">
+    Each service link in the network tables above shows a 🧅 — click it to copy
+    that tool's full onion URL. Reaching these tools over Tor is also a great way
+    to test your application's <strong>robustness in less reliable network
+    environments</strong>: onion circuits add real latency, jitter and occasional
+    drops, surfacing timeout and retry bugs that a fast local link hides.
+  </p>
+  <p class="attach-note">
+    One caveat: Bitcart is reachable over Tor but isn't fully onion-native — some
+    of its pages build absolute links from the clearnet hostname, so they may
+    point back to the clearnet site.
+  </p>
+</details>
+{% endif %}
 
 <details class="host-totals" open>
   <summary><span class="caret"></span><h2>Host capacity</h2></summary>
@@ -255,8 +251,8 @@
   {% endif %}
 </details>
 
-{% set ns = namespace(any=false) %}
-{% for s in sections %}{% for a in s.attach if a.audience == 'operator' %}{% set ns.any = true %}{% endfor %}{% endfor %}
+{% set ns = namespace(any=false, note='') %}
+{% for s in sections %}{% for a in s.attach if a.audience == 'operator' %}{% set ns.any = true %}{% if not ns.note and a.note %}{% set ns.note = a.note %}{% endif %}{% endfor %}{% endfor %}
 {% if ns.any %}
 <details class="host-totals operator-only">
   <summary><span class="caret"></span><h2>🔧 Operator only</h2></summary>
@@ -274,12 +270,12 @@
     <div class="attach-item attach-operator">
       <div class="attach-label">{{ a.label }}</div>
       <pre class="cmd">{{ a.command }}</pre>
-      {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>
   {% endif %}
   {% endfor %}
+  {% if ns.note %}<div class="attach-note">{{ ns.note }}</div>{% endif %}
 </details>
 {% endif %}
 {% endblock %}

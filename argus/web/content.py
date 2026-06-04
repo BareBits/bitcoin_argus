@@ -249,10 +249,9 @@ class AttachCommand:
     command: str
     note: str = ""
     audience: str = "visitor"  # "visitor" (anyone) or "operator" (host access only)
-    # Optional Tor variant shown in the SAME container, right below the clearnet
-    # command (e.g. the onion connect URI for an LND node).
+    # Optional Tor variant shown in the SAME code box, on the line below the
+    # clearnet command (e.g. the onion connect URI for an LND node).
     command_onion: str = ""
-    note_onion: str = ""
 
 
 def attach_commands(

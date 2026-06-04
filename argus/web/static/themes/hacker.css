@@ -242,8 +242,6 @@ details[open] > summary > .caret { transform: rotate(90deg); }
   padding: 0.25rem 0.5rem; font-size: 0.8rem;
 }
 .onion-copy.copied .onion-pop { display: none; }
-.cmd-onion { margin-top: 0.4rem; }
-.tor-intro .cmd { display: inline-block; }
 
 /* Operator-only section at the foot of the page. */
 .operator-net > h4 { margin: 0.6rem 0 0.2rem; color: var(--accent); }

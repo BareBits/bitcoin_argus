@@ -324,23 +324,18 @@ def build_sections(
             for label, pk, p2p in reversed(uris):
                 uri = f"{pk}@{cfg.global_.hostname}:{p2p}"
                 # Clearnet connect line, with the onion connect (when Tor is on)
-                # shown right below it in the SAME container. The node advertises
+                # shown right below it in the SAME code box. The node advertises
                 # this onion in gossip, so peers can open channels over Tor too.
-                onion_cmd = ""
-                onion_note = ""
-                if onion_hostname:
-                    onion_cmd = f"lncli connect {pk}@{onion_hostname}:{p2p}"
-                    onion_note = (
-                        "Over Tor: the node advertises this onion URI in gossip; "
-                        "torify/launch lncli through Tor to reach it."
-                    )
+                onion_cmd = (
+                    f"lncli connect {pk}@{onion_hostname}:{p2p}"
+                    if onion_hostname else ""
+                )
                 section.attach.insert(0, AttachCommand(
                     label=f"Lightning node {label} (LND) — connect / open a channel",
                     command=f"lncli connect {uri}",
                     note="The node's public connection URI is pubkey@host:port.",
                     audience="visitor",
                     command_onion=onion_cmd,
-                    note_onion=onion_note,
                 ))
         sections.append(section)
     return sections
