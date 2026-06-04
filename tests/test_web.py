@@ -212,6 +212,55 @@ def test_lnd_pubkey_uri_and_mempool_link():
     assert f"{pk}@{cfg.global_.hostname}:{port_map['regtest']['lnd_p2p']}" in uri_cmd.command
 
 
+def test_lnd_link_falls_back_to_mempool_space():
+    # signet/testnet3/testnet4 have no local mempool by default, so the LND row
+    # links out to the matching public mempool.space Lightning node page.
+    cfg = validated(make({
+        "signet": {"enabled": True, "bitcart": BITCART_OFF},
+        "testnet3": {"enabled": True, "bitcart": BITCART_OFF},
+        "testnet4": {"enabled": True, "bitcart": BITCART_OFF},
+    }))
+    port_map = allocate(cfg)
+    pk = "02" + "ab" * 32
+    metrics = {"usage": {}, "host": {},
+               "lnd": {"signet": pk, "testnet3": pk, "testnet4": pk}}
+    sections = {s.key: s for s in build_sections(cfg, port_map, metrics)}
+
+    expected = {
+        "signet": f"https://mempool.space/signet/lightning/node/{pk}",
+        "testnet3": f"https://mempool.space/testnet/lightning/node/{pk}",
+        "testnet4": f"https://mempool.space/testnet4/lightning/node/{pk}",
+    }
+    for key, url in expected.items():
+        lnd = next(s for s in sections[key].services if s.bucket == "lnd")
+        assert [l.url for l in lnd.links] == [url]
+        assert lnd.links[0].label == "Node on mempool.space"
+
+
+def test_local_mempool_link_wins_over_mempool_space():
+    # When a network DOES run a local mempool, its row points there, not out.
+    cfg = validated(make({"signet": {
+        "enabled": True, "bitcart": BITCART_OFF, "mempool": {"enabled": True}}}))
+    port_map = allocate(cfg)
+    pk = "02" + "ab" * 32
+    metrics = {"usage": {}, "host": {}, "lnd": {"signet": pk}}
+    section = next(s for s in build_sections(cfg, port_map, metrics) if s.key == "signet")
+    lnd = next(s for s in section.services if s.bucket == "lnd")
+    assert lnd.links[0].label == "Node on mempool"
+    assert "mempool.space" not in lnd.links[0].url
+    assert f"/lightning/node/{pk}" in lnd.links[0].url
+
+
+def test_private_signets_not_linked_to_mempool_space():
+    # The custom signets share chain="signet" but are private — they must never
+    # be mapped to the public explorer (the map is keyed by network key).
+    from argus.web.content import MEMPOOL_SPACE_LN_NODE
+
+    assert "mutinynet" not in MEMPOOL_SPACE_LN_NODE
+    assert "custom-signet" not in MEMPOOL_SPACE_LN_NODE
+    assert "regtest" not in MEMPOOL_SPACE_LN_NODE
+
+
 def test_second_lnd_node_rows_and_uris():
     cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     port_map = allocate(cfg)

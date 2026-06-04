@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
-from .content import VARIANT_ORDER, VARIANTS, AttachCommand, Variant, attach_commands
+from .content import (
+    MEMPOOL_SPACE_LN_NODE,
+    VARIANT_ORDER,
+    VARIANTS,
+    AttachCommand,
+    Variant,
+    attach_commands,
+)
 from .metrics import bucket_for
 
 
@@ -99,13 +106,18 @@ def _service_rows(
         rows.append(row("Signet miner" if spec.is_signet else "Regtest miner", "miner"))
 
     # Standalone LND node(s). On mined networks a second node ("argus2") is added
-    # and the two are auto-wired with channels. When mempool is up and we know a
-    # node's pubkey, link its row to its page on the explorer's Lightning section.
+    # and the two are auto-wired with channels. When we know a node's pubkey, link
+    # its row to its Lightning node page: our own mempool if this network runs one,
+    # otherwise the public mempool.space explorer for networks it covers.
     def lnd_row(bucket: str, label: str, p2p: str, rest: str, grpc: str, pk) -> None:
         links: list[LinkRef] = []
         if pk and net.mempool_enabled(spec):
             base = _url(cfg, net.mempool.ssl, ports["mempool_public"])
             links.append(LinkRef("Node on mempool", f"{base}lightning/node/{pk}"))
+        elif pk and net_key in MEMPOOL_SPACE_LN_NODE:
+            links.append(
+                LinkRef("Node on mempool.space", f"{MEMPOOL_SPACE_LN_NODE[net_key]}{pk}")
+            )
         rows.append(
             row(
                 label,

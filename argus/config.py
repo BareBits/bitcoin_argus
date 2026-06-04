@@ -264,7 +264,12 @@ class MempoolCfg(_Base):
     # None => fall back to the network's default (regtest/custom-signet/mutinynet on).
     enabled: bool | None = None
     ssl: bool = True
-    statistics: bool = False  # historical fee/mempool graphs; biggest DB grower
+    # Historical fee/mempool graphs. On by default; it's the biggest MariaDB
+    # grower, so set False on disk-constrained hosts.
+    statistics: bool = True
+    # Run mempool's Lightning indexer against the local primary LND node, so the
+    # explorer's /lightning pages (and the dashboard's node links) are populated.
+    lightning: bool = True
 
 
 class MinerCfg(_Base):

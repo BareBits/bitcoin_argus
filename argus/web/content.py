@@ -142,6 +142,18 @@ VARIANTS: dict[str, Variant] = {
 }
 
 
+# Public mempool.space Lightning node pages, keyed by Argus network *key* (not
+# chain): only the truly public networks belong here. The custom signets
+# (mutinynet, custom-signet) share chain="signet" but are private, so they must
+# never map to mempool.space/signet — keying off the network key avoids that.
+# Used as a fallback link when a network has no local mempool of its own.
+MEMPOOL_SPACE_LN_NODE: dict[str, str] = {
+    "testnet3": "https://mempool.space/testnet/lightning/node/",
+    "testnet4": "https://mempool.space/testnet4/lightning/node/",
+    "signet": "https://mempool.space/signet/lightning/node/",
+}
+
+
 # Electrum's network selection flag per chain (testnet4 has no dedicated flag yet).
 _ELECTRUM_FLAG: dict[str, str | None] = {
     "regtest": "--regtest",

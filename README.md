@@ -153,13 +153,39 @@ A `resources` block (global and per-network; per-network wins) tunes footprint.
 A `profile` (`low` / `medium` (default) / `high`) sets baseline values for
 `bitcoind_dbcache`, `bitcoind_maxmempool`, `fulcrum_db_mem`,
 `fulcrum_db_max_open_files`, and `mempool_mariadb_buffer_mb`; any of those can be
-overridden explicitly (explicit > profile). Three things are on by default
-(each toggleable): **Docker log rotation** (`log_rotation`, on every
-Argus-generated service — not Bitcart's installer-managed containers), **LND**
-disk hygiene (`lnd.auto_compact` → bbolt auto-compact + canceled-invoice GC), and
-**mempool statistics off** (`mempool.statistics: false` — the biggest MariaDB
-grower). Note: bitcoind `prune`/`txindex` can't be reduced while Fulcrum is
-enabled (Fulcrum requires `txindex` + an un-pruned node).
+overridden explicitly (explicit > profile). Two disk-hygiene measures are on by
+default (each toggleable): **Docker log rotation** (`log_rotation`, on every
+Argus-generated service — not Bitcart's installer-managed containers) and **LND**
+disk hygiene (`lnd.auto_compact` → bbolt auto-compact + canceled-invoice GC).
+**mempool statistics** (historical fee/mempool graphs) are also **on by default**
+(`mempool.statistics: true`); they're the biggest MariaDB grower, so set it
+`false` on disk-constrained hosts. Note: bitcoind `prune`/`txindex` can't be
+reduced while Fulcrum is enabled (Fulcrum requires `txindex` + an un-pruned node).
+
+A local mempool also indexes the **Lightning network** by default
+(`mempool.lightning: true`): its backend reads the primary LND node's graph over
+REST (LND's data volume is mounted read-only for the TLS cert + readonly
+macaroon), so the explorer's `/lightning` pages — and the dashboard's per-node
+links — are populated, and the explorer's top-level **Lightning Explorer**
+(`/lightning`) section is enabled. A node only appears once it has at least one
+channel, so on single-node networks with no auto-opened channels (e.g. mutinynet)
+the page stays empty until you open one. The dashboard links each LND node to its
+Lightning page on the local mempool when one runs, otherwise to mempool.space
+for the networks it covers (public signet, testnet3, testnet4).
+
+The real testnets run in their **native mempool network** (testnet3 → testnet,
+testnet4 → testnet4, custom-signet/mutinynet → signet): the explorer is served at
+the root path (`ROOT_NETWORK`) with the other networks hidden, so the selector
+lists only that network and mempool shows its own built-in "test coins have no
+value" warning. (The frontend image's nginx only proxies the root `/api`, hence
+the single network at root.)
+
+**regtest** is a special case: mempool's frontend hardcodes regtest out of *both*
+its testnet-warning list and its Lightning-supported-network list. To keep the
+Lightning Explorer working we run regtest in mempool's **mainnet** slot
+(`network=""`, which mempool *does* allow Lightning for), and Argus injects its
+own red warning banner via an nginx `sub_filter` (a small generated
+`mempool/web-banner.sh`) so the "no real value" notice still shows.
 
 ## Ports & firewall
 
