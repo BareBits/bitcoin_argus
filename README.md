@@ -144,6 +144,16 @@ multi-instance, `REVERSEPROXY=none`, the per-net ports, and attaches its Neutrin
 > (`deploy_bitcart_liquidity_lnd`); and the public service ports must be open in
 > the firewall (see below) — the store/admin SSR also fetches the public API URL.
 
+### Demo products
+
+After deploying, the wrapper seeds three placeholder products into the admin's
+first store — original "folk hero" trading cards for Hal Finney, Gavin Andresen,
+and Satoshi Nakamoto (500 / 1,000 / 10,000 sats). The store's currency is set to
+`SATS` so the prices are native. The card art (committed SVG sources + rendered
+PNGs) and the idempotent seeding script live in `argus/bitcart_cards/`; re-running
+a deploy never duplicates the products. Regenerate the art with
+`python -m argus.bitcart_cards.build` (needs `rsvg-convert`).
+
 ### Admin login
 
 The Bitcart **admin password is auto-generated** into `secrets/<net>/secrets.env`

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import yaml
 
 from argus.generate import generate
@@ -306,6 +308,27 @@ def test_bitcart_env(tmp_path):
     assert env["BTCLND_NEUTRINO_PEERS"] == "bitcoind:18444"
     assert env["BITCART_ADMIN_API_URL"] == "http://x.com:30202"  # ssl off => http
     assert env["LIQUIDITYHELPER_LIQUIDITY_DISABLED"] == "False"
+
+
+def test_bitcart_products_seeded(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OK}}))
+    pdir = out / "regtest" / "bitcart" / "products"
+    manifest = json.loads(_read(pdir / "manifest.json"))
+    assert {m["name"] for m in manifest} == {
+        "Hal Finney", "Gavin Andresen", "Satoshi Nakamoto"}
+    # Every manifest image and the seeding script are staged alongside it.
+    for m in manifest:
+        assert (pdir / m["image"]).is_file()
+    seed = pdir / "seed-products.py"
+    assert seed.is_file() and (seed.stat().st_mode & 0o111)  # executable
+    # The wrapper invokes the seeder after deploy.
+    wrapper = _read(out / "regtest" / "bitcart" / "deploy-bitcart.sh")
+    assert "products/seed-products.py" in wrapper
+
+
+def test_bitcart_products_absent_when_disabled(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    assert not (out / "regtest" / "bitcart").exists()
 
 
 def test_resource_knobs_in_confs(tmp_path):
