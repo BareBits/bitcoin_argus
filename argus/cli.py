@@ -1,10 +1,11 @@
 """Command-line interface for Bitcoin Argus.
 
 Commands:
-  validate   parse + fully validate the config
-  ports      show the allocated host ports per network
-  generate   render compose projects for enabled networks
-  list       list known networks and their enabled/disabled state
+  validate     parse + fully validate the config
+  ports        show the allocated host ports per network
+  generate     render compose projects for enabled networks
+  list         list known networks and their enabled/disabled state
+  credentials  show admin login credentials (Bitcart admin)
 """
 
 from __future__ import annotations
@@ -15,8 +16,10 @@ from pathlib import Path
 
 from .config import ConfigError, load_config
 from .constants import NETWORK_ORDER, NETWORK_SPECS
+from .credentials import build_credentials, format_credentials
 from .generate import generate
 from .ports import PortAllocationError, allocate
+from .secrets import read_onion_hostname
 
 _DEFAULT_CONFIG = "config.yaml"
 
@@ -73,6 +76,25 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_credentials(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    if args.network is not None and args.network not in cfg.networks:
+        print(f"error: unknown network {args.network!r}", file=sys.stderr)
+        return 1
+    port_map = allocate(cfg)
+    secrets_dir = Path(args.secrets_dir)
+    # Read-only: only surface the onion URL if the seed already exists; never
+    # create it (a "show credentials" command must not mutate the secret store).
+    onion_hostname = (
+        read_onion_hostname(secrets_dir) if cfg.global_.tor.enabled else None
+    )
+    creds = build_credentials(
+        cfg, port_map, secrets_dir, only=args.network, onion_hostname=onion_hostname
+    )
+    print(format_credentials(creds), end="")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="argus", description="Bitcoin Argus CLI")
     parser.add_argument(
@@ -91,6 +113,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--output-dir", default="generated", type=Path)
     g.add_argument("--secrets-dir", default="secrets", type=Path)
     g.set_defaults(func=cmd_generate)
+
+    cr = sub.add_parser("credentials", help="show admin login credentials")
+    cr.add_argument(
+        "network", nargs="?", help="only this network (default: all enabled)"
+    )
+    cr.add_argument("--secrets-dir", default="secrets", type=Path)
+    cr.set_defaults(func=cmd_credentials)
 
     return parser
 
