@@ -201,6 +201,38 @@ rule since they're loopback-bound). Because Docker publishes ports past `ufw`,
 this script is what makes the public ports reachable once you enforce a
 default-deny incoming policy (`ufw default deny incoming && ufw --force enable`).
 
+## Tor (onion access)
+
+Opt-in via `global.tor.enabled: true`. Argus stands up **one Tor v3 onion
+address for the whole installation** (a shared `tor` container in
+`generated/shared-tor/`) and routes **purely by port** — every sub-tool answers
+on the onion at the *same* port it uses on clearnet, so there's a single address
+to remember. HTTP services are routed straight to their plain-HTTP backend
+(bypassing Caddy; the onion layer already encrypts the transport); Electrum and
+LND/bitcoind P2P route to their published port. Operator-only ports (Core RPC,
+LND gRPC/REST, Fulcrum admin) are never exposed.
+
+The onion key is **pre-generated and persisted** in `secrets/tor/` (a 32-byte
+seed → a stable `.onion`), so the address survives regeneration and is known
+ahead of deploy. Each **LND node also advertises its onion** in gossip
+(`externalip=<onion>:<p2p>`, dual-stack alongside clearnet), so peers can open
+Lightning channels to it over Tor — and that address propagates onto the
+locally-hosted mempool node page. The dashboard shows the onion address, a
+per-network onion port map, and onion connection recipes. Reaching the stack over
+Tor is also a good way to test your app's robustness on higher-latency, less
+reliable links. (Caveat: Bitcart is reachable over Tor but not fully
+onion-native — some of its pages build absolute clearnet links.)
+
+`global.tor` toggles `expose_web` / `expose_electrum` / `expose_lnd_p2p` /
+`expose_bitcoind_p2p` narrow the surface without disabling Tor; `image` overrides
+the tor container image.
+
+**Deploy order matters with `expose_lnd_p2p`:** LND runs in hybrid Tor mode, so
+it reaches the shared tor container's SOCKS proxy through the host gateway. Bring
+up `generated/shared-tor/` **and** run `generated/firewall.sh` (which opens the
+Docker-bridge → SOCKS path) **before** the per-network stacks — otherwise LND
+can't reach the proxy and will restart-loop validating its onion `externalip`.
+
 ## Per-network notes
 
 - **regtest** — self-mined (1 block/min by default); self-hosted explorer (no
@@ -231,3 +263,4 @@ default-deny incoming policy (`ufw default deny incoming && ufw --force enable`)
 - [x] Phase 8 — firewall script, SSL path, deploy docs
 - [x] Dashboard — welcome/status web server (themes, live per-service metrics)
 - [x] Self-mined custom signet — auto challenge/key + signet-miner sidecar
+- [x] Tor — single onion fronting every sub-tool (port-routed) + LND onion advertisement

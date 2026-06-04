@@ -142,6 +142,86 @@ VARIANTS: dict[str, Variant] = {
 }
 
 
+# --- "Which test network should I use?" column copy --------------------------
+
+# The synthetic column for plain local regtest (not one of this host's networks).
+LOCAL_REGTEST_KEY = "local-regtest"
+LOCAL_REGTEST_TITLE = "Regtest on your machine"
+
+# Five "when this makes the most sense" reasons per network mode. Rendered as
+# side-by-side columns for the enabled networks plus the local-regtest column.
+WHEN_TO_USE: dict[str, tuple[str, ...]] = {
+    LOCAL_REGTEST_KEY: (
+        "Total control: you mine, you reset, you set the rules — no operator",
+        "Instant blocks on demand (generatetoaddress) — never wait for a confirmation",
+        "Fully offline and private; nothing ever leaves your machine",
+        "Best for unit/integration tests and CI — deterministic and disposable",
+        "Safely try advanced tricks like double-spends and hand-crafted reorgs",
+    ),
+    "regtest": (
+        "Fastest feedback of the shared nets — blocks about once a minute",
+        "Attach your own node over the public P2P port and mine blocks yourself",
+        "No coin scarcity — coins come from mining, with no faucet to chase",
+        "Great for smoke-testing wallets and indexers against a clean chain",
+        "Lowest resource footprint of the hosted networks",
+    ),
+    "custom-signet": (
+        "Realistic signet consensus rules without exposing your work publicly",
+        "Stable, reproducible chain shared only with people you invite",
+        "Operator-held signer means predictable, controlled block production",
+        "Ideal for private demos and integration tests that need signet semantics",
+        "Connect wallets to the public indexer like any other network",
+    ),
+    "mutinynet": (
+        "30-second blocks: exercise confirmation flows fast, still shared",
+        "Excellent for Lightning channel open/close and time-sensitive logic",
+        "Realistic signet rules at a much higher tempo than public signet",
+        "Good for iteration or light load testing where 10-minute blocks drag",
+        "Shared network, so several parties can interact on the same chain",
+    ),
+    "signet": (
+        "Closest to mainnet behaviour of the public test networks",
+        "Globally shared — ideal for interoperability testing with other software",
+        "Stable and predictable, with community faucets handing out coins",
+        "Long-lived chain, good when you want to avoid surprise reorgs",
+        "No private infrastructure needed; everyone reaches the same network",
+    ),
+    "testnet4": (
+        "Public proof-of-work network closest to mainnet mining mechanics",
+        "Healthier than testnet3 thanks to anti-griefing and difficulty fixes",
+        "Good for testing real PoW dynamics: variable block times and reorgs",
+        "Interoperability testing with other testnet4-aware tooling",
+        "Use when you specifically need a public PoW testnet, not a signet",
+    ),
+    "testnet3": (
+        "Maximum compatibility with older tools that only speak testnet3",
+        "Large historical chain available for sync and scale testing",
+        "Public PoW network for interoperability with legacy software",
+        "Handy to reproduce testnet3-specific behaviours or bugs",
+        "Still reachable when a dependency hasn't moved to testnet4 yet",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class WhenColumn:
+    key: str
+    title: str
+    reasons: tuple[str, ...]
+
+
+def when_to_use_columns(enabled_keys: list[str]) -> list[WhenColumn]:
+    """Columns for the picker: local regtest first, then each enabled network
+    in the recommended order."""
+    cols = [
+        WhenColumn(LOCAL_REGTEST_KEY, LOCAL_REGTEST_TITLE, WHEN_TO_USE[LOCAL_REGTEST_KEY])
+    ]
+    for key in VARIANT_ORDER:
+        if key in enabled_keys and key in WHEN_TO_USE:
+            cols.append(WhenColumn(key, VARIANTS[key].title, WHEN_TO_USE[key]))
+    return cols
+
+
 # Public mempool.space Lightning node pages, keyed by Argus network *key* (not
 # chain): only the truly public networks belong here. The custom signets
 # (mutinynet, custom-signet) share chain="signet" but are private, so they must

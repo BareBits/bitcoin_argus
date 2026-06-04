@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
+from ..tor import onion_routes
 from .content import (
     MEMPOOL_SPACE_LN_NODE,
     VARIANT_ORDER,
@@ -34,6 +35,14 @@ class PortRef:
 class LinkRef:
     label: str
     url: str
+
+
+@dataclass
+class OnionPortRef:
+    """One sub-tool reachable over the installation's onion at this port."""
+
+    service: str
+    port: int
 
 
 @dataclass
@@ -62,6 +71,7 @@ class NetworkSection:
     enabled: bool
     services: list[ServiceRow] = field(default_factory=list)
     attach: list[AttachCommand] = field(default_factory=list)
+    onion: list[OnionPortRef] = field(default_factory=list)
     ram_total: int = 0
     disk_total: int = 0
 
@@ -201,13 +211,24 @@ def _service_rows(
 
 
 def build_sections(
-    cfg: ArgusConfig, port_map: dict[str, dict[str, int]], metrics: dict
+    cfg: ArgusConfig,
+    port_map: dict[str, dict[str, int]],
+    metrics: dict,
+    onion_hostname: str | None = None,
 ) -> list[NetworkSection]:
     """Build one section per configured network, in the recommended order.
 
     Disabled networks still get a section (with no service table) so visitors see
-    the full menu of variants and their status.
+    the full menu of variants and their status. When ``onion_hostname`` is set
+    (Tor enabled), each section also lists how its sub-tools map onto the single
+    onion address (by port).
     """
+    # Onion routes for the whole install, grouped by network (computed once).
+    onion_by_net: dict[str | None, list] = {}
+    if onion_hostname:
+        for r in onion_routes(cfg, port_map):
+            onion_by_net.setdefault(r.net_key, []).append(r)
+
     sections: list[NetworkSection] = []
     for net_key in VARIANT_ORDER:
         net = cfg.networks.get(net_key)
@@ -244,11 +265,29 @@ def build_sections(
                     uris.append((net.lnd.secondary.name, pk2, ports["lnd2_p2p"]))
             for label, pk, p2p in reversed(uris):
                 uri = f"{pk}@{cfg.global_.hostname}:{p2p}"
+                # Onion connect line first (when Tor is on) so it sits above the
+                # clearnet one: the node advertises this onion in gossip, so peers
+                # can open channels to it over Tor.
+                if onion_hostname:
+                    onion_uri = f"{pk}@{onion_hostname}:{p2p}"
+                    section.attach.insert(0, AttachCommand(
+                        label=f"Lightning node {label} (LND) — connect over Tor",
+                        command=f"lncli connect {onion_uri}",
+                        note="The node advertises this onion URI in gossip; "
+                             "torify/launch lncli through Tor to reach it.",
+                        audience="visitor",
+                    ))
                 section.attach.insert(0, AttachCommand(
                     label=f"Lightning node {label} (LND) — connect / open a channel",
                     command=f"lncli connect {uri}",
                     note="The node's public connection URI is pubkey@host:port.",
                     audience="visitor",
                 ))
+
+            # Per-network onion port map (for the "Tor accessibility" section).
+            section.onion = [
+                OnionPortRef(r.service, r.virtual_port)
+                for r in onion_by_net.get(net_key, [])
+            ]
         sections.append(section)
     return sections

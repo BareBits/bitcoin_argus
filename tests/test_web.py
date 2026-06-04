@@ -316,6 +316,69 @@ def test_no_lnd_link_or_uri_without_pubkey():
     assert not any("lncli connect" in a.command for a in section.attach)
 
 
+# --- "which network" picker columns + Tor accessibility ---------------------
+
+
+def test_when_to_use_columns_enabled_plus_local():
+    from argus.web.content import when_to_use_columns
+
+    # Local-regtest column always leads; then only the ENABLED networks, in order.
+    cols = when_to_use_columns(["signet", "regtest"])
+    keys = [c.key for c in cols]
+    assert keys[0] == "local-regtest"
+    assert keys[1:] == ["regtest", "signet"]  # canonical VARIANT_ORDER
+    assert all(len(c.reasons) == 5 for c in cols)  # exactly five reasons each
+    local = cols[0]
+    assert local.title == "Regtest on your machine"
+
+
+def test_build_sections_onion_population():
+    cfg = validated(make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OFF}},
+        tor={"enabled": True},
+    ))
+    port_map = allocate(cfg)
+    onion = "abc234def567ghi890jkl123mno456pqr789stu012vwx345yz678abd.onion"
+    section = next(
+        s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}}, onion)
+        if s.key == "regtest"
+    )
+    services = {o.service: o.port for o in section.onion}
+    # HTTP service uses its clearnet public port on the onion.
+    assert services["mempool explorer"] == port_map["regtest"]["mempool_public"]
+    # Operator-only ports are absent from the onion map.
+    assert all("RPC" not in name and "gRPC" not in name for name in services)
+
+
+def test_build_sections_no_onion_without_hostname():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    port_map = allocate(cfg)
+    section = next(
+        s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    assert section.onion == []  # Tor off => no onion map
+
+
+def test_onion_lnd_connect_line_present():
+    cfg = validated(make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OFF}},
+        tor={"enabled": True},
+    ))
+    port_map = allocate(cfg)
+    pk = "02" + "ab" * 32
+    onion = "abc234def567ghi890jkl123mno456pqr789stu012vwx345yz678abd.onion"
+    section = next(
+        s for s in build_sections(
+            cfg, port_map, {"usage": {}, "host": {}, "lnd": {"regtest": pk}}, onion)
+        if s.key == "regtest"
+    )
+    connects = [a.command for a in section.attach if "lncli connect" in a.command]
+    p2p = port_map["regtest"]["lnd_p2p"]
+    assert any(f"{pk}@{onion}:{p2p}" in c for c in connects)  # onion connect URI
+    assert any(f"{pk}@{cfg.global_.hostname}:{p2p}" in c for c in connects)  # clearnet (dual)
+
+
 # --- generation -------------------------------------------------------------
 
 

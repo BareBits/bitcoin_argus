@@ -73,6 +73,31 @@ class ResourcesCfg(_Base):
     mempool_mariadb_buffer_mb: int | None = Field(default=None, ge=8)  # MB
 
 
+class TorCfg(_Base):
+    """Tor (v3 onion) accessibility for the whole installation.
+
+    Opt-in. When enabled, Argus stands up a single onion service that fronts
+    *every* enabled sub-tool — routing purely by port, so the onion uses the same
+    port numbers as clearnet (one address for the entire install). Operator-only
+    ports (Core RPC, LND gRPC/REST, Fulcrum admin) are never exposed. The four
+    expose toggles let an operator narrow that surface without disabling Tor.
+    """
+
+    enabled: bool = False
+    image: str = "lncm/tor:0.4.7.13"
+    expose_web: bool = True  # mempool / cashu / bitcart frontends + the dashboard
+    expose_electrum: bool = True  # public Fulcrum Electrum TCP ports
+    expose_lnd_p2p: bool = True  # LND P2P (also drives LND onion advertisement)
+    expose_bitcoind_p2p: bool = True  # bitcoind P2P (only where it is already public)
+
+    @field_validator("image")
+    @classmethod
+    def _check_image(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("global.tor.image must not be empty")
+        return v
+
+
 class GlobalConfig(_Base):
     """Settings shared by every network."""
 
@@ -97,6 +122,7 @@ class GlobalConfig(_Base):
     web_python_image: str = "python:3.12-slim"
     socket_proxy_image: str = "tecnativa/docker-socket-proxy:0.3.0"
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
+    tor: TorCfg = Field(default_factory=TorCfg)
 
     @field_validator("hostname")
     @classmethod

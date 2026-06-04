@@ -34,6 +34,20 @@
     The networks below are a <em>shared</em> playground for when you need
     something others can reach too.
   </p>
+  {% if when_columns %}
+  <p>
+    Here's when each mode tends to make the most sense — including plain
+    <strong>regtest on your own machine</strong>:
+  </p>
+  <div class="access-cols when-cols">
+    {% for col in when_columns %}
+    <div class="when-col{% if col.key == 'local-regtest' %} when-local{% endif %}">
+      <h4>{{ col.title }}</h4>
+      <ul>{% for r in col.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </details>
 
 <details class="access-model" open>
@@ -133,6 +147,13 @@
   {% if s.attach %}
   <div class="attach">
     <h4>Attach your tools</h4>
+    {% if onion_hostname %}
+    <div class="attach-note attach-onion">
+      🧅 Over Tor, every service below is reachable at the installation's onion
+      address on its usual port:
+      <code>{{ onion_hostname }}</code>
+    </div>
+    {% endif %}
     {% for a in s.attach %}
     <div class="attach-item attach-{{ a.audience }}">
       <div class="attach-label">
@@ -143,6 +164,43 @@
       {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
     </div>
     {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if onion_hostname and s.onion %}
+  <div class="tor-access">
+    <h4>🧅 Tor accessibility</h4>
+    <p>
+      This whole installation is reachable over a <strong>single Tor v3 onion
+      address</strong>. There's nothing per-service to remember: routing is by
+      <em>port</em>, so each sub-tool answers on the same port it uses on
+      clearnet — just on the onion host instead. Visit an HTTP service in the
+      Tor Browser, or point a Tor-aware client (e.g. <code>torsocks</code>) at
+      the onion for the TCP services.
+    </p>
+    <pre class="cmd">{{ onion_hostname }}</pre>
+    <table class="svc-table tor-table">
+      <thead><tr><th>Sub-tool</th><th>Onion address</th></tr></thead>
+      <tbody>
+        {% for o in s.onion %}
+        <tr>
+          <td>{{ o.service }}</td>
+          <td><code>{{ onion_hostname }}:{{ o.port }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="attach-note">
+      Reaching these tools over Tor is also a great way to test your application's
+      <strong>robustness in less reliable network environments</strong> — onion
+      circuits add real latency, jitter and occasional drops, so it surfaces
+      timeout and retry bugs that a fast local link hides.
+    </p>
+    <p class="attach-note">
+      One caveat: Bitcart is reachable over Tor but isn't fully onion-native — some
+      of its pages build absolute links from the clearnet hostname, so they may
+      point back to the clearnet site.
+    </p>
   </div>
   {% endif %}
   {% endif %}

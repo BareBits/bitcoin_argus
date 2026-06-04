@@ -43,7 +43,18 @@ def _dockerfile() -> str:
     )
 
 
-def _compose() -> dict:
+def _compose(onion_hostname: str | None) -> dict:
+    web_env = {
+        "DOCKER_HOST": "tcp://socket-proxy:2375",
+        "CONFIG_PATH": "/app/config.yaml",
+        "CACHE_DB": "/data/cache.db",
+        "HOST_ROOT": "/host",
+    }
+    # The dashboard shows the installation's onion address (and the per-service
+    # onion connection lines) when Tor is enabled. Passed by env so a config edit
+    # doesn't require a rebuild; absent => the Tor UI is simply omitted.
+    if onion_hostname:
+        web_env["ONION_HOSTNAME"] = onion_hostname
     return {
         "name": "argus-web",
         "services": {
@@ -79,12 +90,7 @@ def _compose() -> dict:
                 "container_name": "argus-web",
                 "restart": "unless-stopped",
                 "depends_on": ["socket-proxy"],
-                "environment": {
-                    "DOCKER_HOST": "tcp://socket-proxy:2375",
-                    "CONFIG_PATH": "/app/config.yaml",
-                    "CACHE_DB": "/data/cache.db",
-                    "HOST_ROOT": "/host",
-                },
+                "environment": web_env,
                 "volumes": [
                     "web_cache:/data",
                     # Host root (read-only) so disk totals reflect the real machine.
@@ -119,6 +125,7 @@ def generate_web(
     cfg: ArgusConfig,
     output_dir: Path,
     config_path: str | Path,
+    onion_hostname: str | None = None,
 ) -> Path | None:
     """Generate ``generated/web/``. Returns its dir, or None if web is disabled."""
     if not cfg.web.enabled:
@@ -127,7 +134,7 @@ def generate_web(
     out_dir = output_dir / "web"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    compose = _compose()
+    compose = _compose(onion_hostname)
     rotation, log_block = global_log(cfg)
     if rotation:
         for svc in compose["services"].values():

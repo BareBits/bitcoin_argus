@@ -9,9 +9,12 @@ from flask import Flask, g, render_template, request, url_for
 from ..config import ArgusConfig, load_config
 from ..ports import allocate
 from . import cache, metrics
+from .content import when_to_use_columns
 from .inventory import build_sections
 
 _DEFAULT_CONFIG = os.environ.get("CONFIG_PATH", "config.yaml")
+# Set by the generated dashboard compose when Tor is enabled (see web_gen.py).
+_ONION_HOSTNAME = os.environ.get("ONION_HOSTNAME") or None
 
 # Bold, unmissable warning shown on every page.
 WARNING_HTML = (
@@ -88,6 +91,7 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
             "theme_links": theme_links,
             "warning_html": WARNING_HTML,
             "repo_url": cfg.web.repo_url,
+            "onion_hostname": _ONION_HOSTNAME,
         }
 
     net_keys = [k for k, _ in cfg.enabled_networks()]
@@ -100,10 +104,11 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
     @app.route("/")
     def index():
         payload, age = _load_metrics()
-        sections = build_sections(cfg, port_map, payload)
+        sections = build_sections(cfg, port_map, payload, _ONION_HOSTNAME)
         return render_template(
             "index.html",
             sections=sections,
+            when_columns=when_to_use_columns(net_keys),
             host=payload.get("host", {}),
             metrics_errors=payload.get("errors", []),
             cache_age=int(age),

@@ -141,3 +141,10 @@ h1, h2, h3, h4 { text-transform: uppercase; color: var(--ink); }
   transition: transform 0.15s ease;
 }
 details[open] > summary > .caret { transform: rotate(90deg); }
+
+/* Network-picker columns + Tor accessibility */
+.when-cols { margin-top: 0.6rem; }
+.when-col.when-local { border: 2px solid var(--gold); border-radius: 4px; }
+.tor-access { padding: 0.6rem 1rem 1rem; border-top: 3px solid var(--ink); }
+.tor-access h4 { color: var(--blue); margin: 0.6rem 0 0.4rem; }
+.tor-table { margin: 0.6rem 0; }

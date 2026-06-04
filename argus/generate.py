@@ -12,10 +12,12 @@ from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
 from .context import BuildContext, Fragment
 from .firewall import generate_firewall
+from .onionkey import OnionKey
 from .ports import allocate
 from .resources import log_options, resolve
-from .secrets import load_or_create
+from .secrets import load_or_create, load_or_create_onion_key
 from .shared import generate_shared
+from .tor import generate_tor
 from .web_gen import generate_web
 
 
@@ -44,6 +46,7 @@ def generate_network(
     ports: dict[str, int],
     output_dir: Path,
     secrets_dir: Path,
+    onion_hostname: str | None = None,
 ) -> Path:
     """Generate one network's compose project. Returns its output directory."""
     net = cfg.networks[net_key]
@@ -69,6 +72,7 @@ def generate_network(
         out_dir=out_dir,
         project=project,
         resources=resolve(cfg, net_key),
+        onion_hostname=onion_hostname,
     )
 
     compose = _base_compose(project, ctx.network_name)
@@ -118,6 +122,14 @@ def generate(
     output_dir = Path(output_dir)
     secrets_dir = Path(secrets_dir)
 
+    # The installation's single onion identity (pre-generated, persisted, stable).
+    # Derived even when Tor is off only if needed; gate on enablement to avoid
+    # creating a seed for installs that never use it.
+    onion: OnionKey | None = (
+        load_or_create_onion_key(secrets_dir) if cfg.global_.tor.enabled else None
+    )
+    onion_hostname = onion.hostname if onion else None
+
     enabled = {k for k, _ in cfg.enabled_networks()}
     if only is not None:
         if only not in cfg.networks:
@@ -129,7 +141,7 @@ def generate(
         targets = [k for k, _ in cfg.enabled_networks()]
 
     dirs = [
-        generate_network(cfg, k, port_map[k], output_dir, secrets_dir)
+        generate_network(cfg, k, port_map[k], output_dir, secrets_dir, onion_hostname)
         for k in targets
     ]
 
@@ -138,8 +150,14 @@ def generate(
     if shared_dir is not None:
         dirs.append(shared_dir)
 
+    # The shared Tor layer (one onion fronting every sub-tool), when enabled.
+    if onion is not None:
+        tor_dir = generate_tor(cfg, port_map, onion, output_dir)
+        if tor_dir is not None:
+            dirs.append(tor_dir)
+
     # The dashboard spans all networks too; generated alongside the shared layer.
-    web_dir = generate_web(cfg, output_dir, config_path)
+    web_dir = generate_web(cfg, output_dir, config_path, onion_hostname)
     if web_dir is not None:
         dirs.append(web_dir)
 

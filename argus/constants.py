@@ -123,6 +123,13 @@ NETWORK_BLOCK_SIZE = 1000  # large block per network to allow expansion
 # collides with a per-network port block.
 WEB_BACKEND_PORT = 29080
 
+# Shared Tor layer. The host-networked tor container exposes its SOCKS proxy here
+# so the per-network LND containers can dial onion peers / advertise their onion.
+# They reach it through TOR_SOCKS_HOST_ALIAS, an /etc/hosts entry pointed at the
+# host gateway (Compose ``extra_hosts: host-gateway``).
+TOR_SOCKS_PORT = 9050
+TOR_SOCKS_HOST_ALIAS = "argus-tor-host"
+
 # Offsets within a network's 1000-port block. Fulcrum instances are computed
 # separately (they are a variable-length list).
 PORT_OFFSETS: dict[str, int] = {

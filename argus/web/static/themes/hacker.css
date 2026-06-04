@@ -205,3 +205,11 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 .aud-v { color: var(--ok); border: 1px solid var(--ok); background: rgba(73, 224, 160, 0.08); }
 .aud-o { color: #ffb454; border: 1px solid #ffb454; background: rgba(255, 180, 84, 0.08); }
 .attach-operator { opacity: 0.92; }
+
+/* Network-picker columns + Tor accessibility */
+.when-cols { margin-top: 0.6rem; }
+.when-col.when-local { border: 1px dashed var(--line-bright); border-radius: 3px; background: rgba(90, 134, 255, 0.06); }
+.tor-access { padding: 0.6rem 1.3rem 1rem; border-top: 1px solid var(--line); }
+.tor-access h4 { color: var(--accent); margin: 0.6rem 0 0.4rem; }
+.tor-table { margin: 0.6rem 0; }
+.attach-onion code, .tor-access code { color: var(--accent); }
