@@ -187,8 +187,46 @@ def test_mempool_network_mapping(tmp_path):
     }))
     rt = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
     t4 = yaml.safe_load(_read(out / "testnet4" / "docker-compose.yml"))
-    assert rt["services"]["mempool-api"]["environment"]["MEMPOOL_NETWORK"] == "mainnet"
+    rt_api = rt["services"]["mempool-api"]["environment"]
+    rt_web = rt["services"]["mempool-web"]["environment"]
+    t4_web = t4["services"]["mempool-web"]["environment"]
+    # regtest runs in the mainnet slot (network="") so the Lightning nav stays
+    # enabled (regtest is hardcoded out of mempool's lightning-network list).
+    assert rt_api["MEMPOOL_NETWORK"] == "mainnet"
+    assert "ROOT_NETWORK" not in rt_web
+    assert rt_web["BACKEND_MAINNET_HTTP_HOST"] == "mempool-api"
+    # A real testnet uses its native slot, served at root, with mainnet hidden so
+    # the selector lists only that network.
     assert t4["services"]["mempool-api"]["environment"]["MEMPOOL_NETWORK"] == "testnet4"
+    assert t4_web["ROOT_NETWORK"] == "testnet4"
+    assert t4_web["TESTNET4_ENABLED"] == "true"
+    assert t4_web["MAINNET_ENABLED"] == "false"
+
+
+def test_mempool_mainnet_slot_injects_warning_banner(tmp_path):
+    # regtest (mainnet slot) gets an injected nginx sub_filter banner, since
+    # mempool shows no built-in test-coin warning for mainnet.
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    web = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))[
+        "services"]["mempool-web"]
+    assert "./mempool/web-banner.sh:/web-banner.sh:ro" in web["volumes"]
+    assert web["command"] == ["/bin/sh", "/web-banner.sh"]
+    script = _read(out / "regtest" / "mempool" / "web-banner.sh")
+    assert "sub_filter" in script and "no real value" in script
+    assert "Argus regtest" in script
+
+
+def test_mempool_native_slot_has_no_banner(tmp_path):
+    # A real testnet uses mempool's built-in warning, so no banner is injected.
+    out, _ = _gen(tmp_path, make({
+        "regtest": {"enabled": False},
+        "testnet4": {"enabled": True, "bitcart": BITCART_OFF,
+                     "mempool": {"enabled": True}},
+    }))
+    web = yaml.safe_load(_read(out / "testnet4" / "docker-compose.yml"))[
+        "services"]["mempool-web"]
+    assert "command" not in web
+    assert "volumes" not in web
 
 
 def test_caddyfile_ssl_off(tmp_path):
@@ -248,11 +286,76 @@ def test_lnd_hygiene_toggle_off(tmp_path):
     assert "auto-compact" not in _read(out / "regtest" / "lnd" / "lnd.conf")
 
 
-def test_mempool_statistics_off_and_buffer(tmp_path):
+def test_mempool_statistics_default_on_and_buffer(tmp_path):
     out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     d = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
-    assert d["services"]["mempool-api"]["environment"]["STATISTICS_ENABLED"] == "false"
+    assert d["services"]["mempool-api"]["environment"]["STATISTICS_ENABLED"] == "true"
     assert "--innodb-buffer-pool-size=128M" in d["services"]["mempool-db"]["command"]
+
+
+def test_mempool_statistics_can_be_disabled(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "mempool": {"statistics": False}}}))
+    d = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    assert d["services"]["mempool-api"]["environment"]["STATISTICS_ENABLED"] == "false"
+
+
+def test_mempool_lightning_wired_to_lnd(tmp_path):
+    out, _ = _gen(tmp_path, make({
+        "regtest": {"enabled": True, "bitcart": BITCART_OFF},
+        "signet": {"enabled": True, "bitcart": BITCART_OFF,
+                   "mempool": {"enabled": True}},
+    }))
+    api = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))[
+        "services"]["mempool-api"]
+    env = api["environment"]
+    assert env["LIGHTNING_ENABLED"] == "true"
+    assert env["LIGHTNING_BACKEND"] == "lnd"
+    assert env["LND_REST_API_URL"] == "https://lnd:8080"
+    assert env["LND_TLS_CERT_PATH"] == "/lnd-data/tls.cert"
+    # regtest -> LND's bitcoin/regtest macaroon dir; readonly (not admin).
+    assert env["LND_MACAROON_PATH"] == (
+        "/lnd-data/data/chain/bitcoin/regtest/readonly.macaroon")
+    assert "lnd_data:/lnd-data:ro" in api["volumes"]
+    assert api["user"] == "0:0"  # so it can read LND's 0600 macaroon
+    assert "lnd" in api["depends_on"]
+
+    # The frontend needs its own LIGHTNING flag to show the /lightning section.
+    web = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))[
+        "services"]["mempool-web"]
+    assert web["environment"]["LIGHTNING"] == "true"
+
+    # The macaroon dir tracks LND's network key (signet here, not the chain name).
+    s_api = yaml.safe_load(_read(out / "signet" / "docker-compose.yml"))[
+        "services"]["mempool-api"]
+    assert s_api["environment"]["LND_MACAROON_PATH"] == (
+        "/lnd-data/data/chain/bitcoin/signet/readonly.macaroon")
+
+
+def test_mempool_lightning_off(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "mempool": {"lightning": False}}}))
+    api = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))[
+        "services"]["mempool-api"]
+    assert "LIGHTNING_ENABLED" not in api["environment"]
+    assert "volumes" not in api
+    assert "user" not in api
+    assert "lnd" not in api["depends_on"]
+    web = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))[
+        "services"]["mempool-web"]
+    assert "LIGHTNING" not in web["environment"]
+
+
+def test_mempool_web_restarts_with_api(tmp_path):
+    # The frontend's nginx caches the API's resolved IP at startup, so Compose
+    # must recreate the frontend whenever it recreates the API (new IP) — else
+    # /api calls 502 until a manual restart.
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    web = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))[
+        "services"]["mempool-web"]
+    assert web["depends_on"]["mempool-api"]["restart"] is True
 
 
 def test_log_rotation_default_on(tmp_path):

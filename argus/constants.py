@@ -191,8 +191,14 @@ DEFAULT_LOG_MAX_SIZE = "10m"
 DEFAULT_LOG_MAX_FILE = 3
 
 
-# mempool has no "regtest" network, so we run it in mainnet mode against the
-# regtest node (data is correct; the UI label is cosmetic). Others map directly.
+# Argus chain -> mempool's network slot. The real testnets use their native slot
+# so the explorer labels them correctly and shows mempool's built-in "test coins
+# have no value" warning (custom-signet + mutinynet share chain="signet" and so
+# the signet slot — fine, each runs its own instance). regtest is the exception:
+# mempool's frontend hardcodes regtest out of BOTH its testnet-warning list AND
+# its Lightning-supported network list, so we run it in the "mainnet" slot
+# instead (network="") — that keeps the Lightning Explorer nav enabled — and add
+# our own warning banner via an nginx sub_filter (see build_mempool).
 MEMPOOL_NETWORK_MAP: dict[str, str] = {
     "regtest": "mainnet",
     "test": "testnet",

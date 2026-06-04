@@ -115,7 +115,9 @@ networks:
 #               # bitcart admin password is auto-generated to secrets/<net>/;
 #               # SMTP password: add BITCART_SMTP_PASSWORD to secrets/<net>/secrets.env
 #   indexers: [ { name, enabled, ssl } ]    # one Fulcrum per entry
-#   mempool:  { enabled, ssl, statistics }  # statistics default false (DB grower)
+#   mempool:  { enabled, ssl, statistics, lightning }  # statistics default true
+#             (biggest DB grower; set false to save disk); lightning default true
+#             (indexes the local LND graph)
 #   resources: { profile, log_rotation, bitcoind_dbcache, bitcoind_maxmempool,
 #                fulcrum_db_mem, fulcrum_db_max_open_files,
 #                mempool_mariadb_buffer_mb }  # per-network override of global
