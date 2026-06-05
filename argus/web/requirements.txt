@@ -5,3 +5,4 @@ gunicorn>=21
 peewee>=3.17
 psutil>=5.9
 docker>=7
+requests>=2.31

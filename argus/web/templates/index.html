@@ -34,6 +34,7 @@
   .net-panel { display: none; }
   .net-donate { margin-top: 1.3rem; }
   .net-donate .donate-table th { text-align: left; white-space: nowrap; }
+  .donate-ln { margin-top: 0.25rem; }
   {% for s in sections %}
   #nettab-{{ s.key }}:checked ~ .net-panels #netpanel-{{ s.key }} { display: block; }
   {% endfor %}
@@ -136,7 +137,9 @@
   <p class="cache-note">
     The same address is reused for each network. <strong>Total donated</strong> is
     everything ever received at that address; <strong>current balance</strong> is
-    what's in the network's wallet right now.
+    what's in the network's wallet right now. Where a ⚡ <strong>Lightning
+    Address</strong> is shown, you can donate over Lightning instead — pay it from
+    a wallet on the matching testnet.
   </p>
   <table class="svc-table donate-table">
     <thead>
@@ -149,6 +152,12 @@
         <td>
           {% if d.address %}<code class="donate-addr">{{ d.address }}</code>
           {% else %}<span class="pending">pending…</span>{% endif %}
+          {% if d.lightning_address %}
+          <div class="donate-ln">⚡ <code class="donate-addr">{{ d.lightning_address }}</code></div>
+          {% endif %}
+          {% if d.lightning_onion %}
+          <div class="donate-ln">⚡ <code class="donate-addr">{{ d.lightning_onion }}</code> <small>(Tor)</small></div>
+          {% endif %}
         </td>
         <td class="num">{% if d.total_received is not none %}{{ d.total_received }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
         <td class="num">{% if d.balance is not none %}{{ d.balance }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
@@ -276,6 +285,15 @@
             <td>{% if d.address %}<code class="donate-addr">{{ d.address }}</code>
                 {% else %}<span class="pending">pending…</span>{% endif %}</td>
           </tr>
+          {% if d.lightning_address or d.lightning_onion %}
+          <tr>
+            <th>Lightning Address</th>
+            <td>
+              {% if d.lightning_address %}<div class="donate-ln">⚡ <code class="donate-addr">{{ d.lightning_address }}</code></div>{% endif %}
+              {% if d.lightning_onion %}<div class="donate-ln">⚡ <code class="donate-addr">{{ d.lightning_onion }}</code> <small>(Tor)</small></div>{% endif %}
+            </td>
+          </tr>
+          {% endif %}
           <tr>
             <th>Total donated</th>
             <td>{% if d.total_received is not none %}{{ d.total_received }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>

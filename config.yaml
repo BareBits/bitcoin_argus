@@ -58,6 +58,18 @@ web:
   operator_name: BareBits                                # footer "Hosted by <name>"
   operator_url: https://getbarebits.com                  # link for the operator name
   contact_email: sales@getbarebits.com                   # shown on the /contact page
+  # LNURL-pay / Lightning Address. When on, the dashboard answers
+  # fees@/cashout@/donate@/referral@<hostname> (plus per-network <name>-<net>@
+  # variants) and mints invoices on each network's primary LND node. The
+  # cashout/fees/referral addresses are wired into each network's Bitcart
+  # liquidity-helper plugin. Clearnet Lightning Addresses need ssl_enabled (the
+  # paying wallet resolves them over https); the onion forms work over http.
+  lnurl:
+    enabled: true
+    # default_network:              # backs the bare addresses; default = first enabled
+    min_sat: 1
+    max_sat: 5000000               # 0.05 BTC — valueless testnet coins, so generous
+    comment_length: 255            # LUD-12; keep > 0 so the plugin's attribution sticks
 
 networks:
   # --- enabled by default ---------------------------------------------------
@@ -80,7 +92,12 @@ networks:
     bitcart:
       admin_email: admin@example.com               # set to a real address
       liquidity:
-        cashout_lightning_address: pay@example.com # required while liquidity on
+        # Optional: an explicit cash-out Lightning Address overrides the auto-
+        # wired cashout-<net>@<hostname> LNURL address. Omit it (when web.lnurl is
+        # on with ssl_enabled) to cash out to this network's own LND node #1.
+        cashout_lightning_address: pay@example.com
+        # referral_fee_amount: 0.0   # hosting/referral fee on top of the dev fee;
+                                      # paid to referral-<net>@<hostname> (needs web.lnurl)
 
   # --- scaffolded but disabled (flip `enabled: true` to use) ----------------
   signet:

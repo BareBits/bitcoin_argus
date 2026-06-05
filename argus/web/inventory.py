@@ -71,6 +71,11 @@ class DonationRow:
     address: str | None = None
     total_received: str | None = None
     balance: str | None = None
+    # The network's donate LNURL / Lightning Address, when web.lnurl is on.
+    # ``lightning_address`` is the clearnet form (shown only with ssl_enabled,
+    # since wallets need https); ``lightning_onion`` is the .onion form (http).
+    lightning_address: str | None = None
+    lightning_onion: str | None = None
 
 
 @dataclass
@@ -284,21 +289,40 @@ def _service_rows(
     return rows
 
 
-def build_donations(cfg: ArgusConfig, metrics: dict) -> list[DonationRow]:
+def build_donations(
+    cfg: ArgusConfig, metrics: dict, onion_hostname: str | None = None
+) -> list[DonationRow]:
     """One donation row per *enabled* network, in the recommended order.
 
     Each network runs a single bitcoind wallet (the miner's where there is one);
     the sidecar publishes that wallet's donation address, its lifetime received,
     and its current balance (see :mod:`argus.builders.donations`). Rows render
     even before the sidecar has reported — the figures just show as pending.
+
+    When ``web.lnurl`` is on, each row also carries the network's ``donate``
+    Lightning Address (clearnet and/or onion), so coins can be returned over
+    Lightning too.
     """
     data = metrics.get("donations") or {}
+    lnurl = cfg.web.lnurl
+    lnurl_on = cfg.web.enabled and lnurl.enabled
+    enabled_keys = [k for k, _ in cfg.enabled_networks()]
+    default_net = lnurl.default_network or (enabled_keys[0] if enabled_keys else None)
+
     rows: list[DonationRow] = []
     for net_key in VARIANT_ORDER:
         net = cfg.networks.get(net_key)
         if net is None or not net.enabled:
             continue
         info = data.get(net_key) or {}
+        ln_addr = ln_onion = None
+        if lnurl_on:
+            # Bare ``donate@`` for the default network, ``donate-<net>@`` elsewhere.
+            local = "donate" if net_key == default_net else f"donate-{net_key}"
+            if cfg.global_.ssl_enabled:
+                ln_addr = f"{local}@{cfg.global_.hostname}"
+            if onion_hostname:
+                ln_onion = f"{local}@{onion_hostname}"
         rows.append(
             DonationRow(
                 key=net_key,
@@ -306,6 +330,8 @@ def build_donations(cfg: ArgusConfig, metrics: dict) -> list[DonationRow]:
                 address=info.get("address"),
                 total_received=info.get("total_received"),
                 balance=info.get("balance"),
+                lightning_address=ln_addr,
+                lightning_onion=ln_onion,
             )
         )
     return rows

@@ -7,7 +7,7 @@ dependencies = ["pydantic>=2", "PyYAML>=6"]
 
 [project.optional-dependencies]
 # Runtime deps for the dashboard (argus.web); also mirrored in argus/web/requirements.txt.
-web = ["Flask>=3,<4", "gunicorn>=21", "peewee>=3.17", "psutil>=5.9", "docker>=7"]
+web = ["Flask>=3,<4", "gunicorn>=21", "peewee>=3.17", "psutil>=5.9", "docker>=7", "requests>=2.31"]
 # The test extra pulls in what the web unit tests import (docker is mocked).
 test = ["pytest>=8", "Flask>=3,<4", "peewee>=3.17", "psutil>=5.9"]
 
