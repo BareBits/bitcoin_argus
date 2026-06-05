@@ -15,6 +15,14 @@
   --btn-b: #1b3082;
   --danger: #ff5470;
   --ok: #49e0a0;
+  /* Network tabs */
+  --tab-bg: #0a1538;
+  --tab-fg: #cdd9ff;
+  --tab-border: #2746b8;
+  --tab-hover-bg: #13235e;
+  --tab-active-bg: #3f6cff;
+  --tab-active-fg: #02030c;
+  --tab-active-border: #cfdcff;
 }
 
 * { box-sizing: border-box; }
@@ -249,6 +257,13 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 /* Donate / recycle section */
 .donate-addr { word-break: break-all; font-size: 0.85rem; }
 .donate .pending { opacity: 0.6; font-style: italic; }
+
+/* Network tabs — glowing console chips. */
+.net-tabs-heading { text-align: center; letter-spacing: 1px; text-shadow: 0 0 10px rgba(90,134,255,0.5); }
+.net-tab {
+  border-radius: 2px; text-transform: uppercase; letter-spacing: 1px; font-size: 0.8rem;
+}
+.net-tab-radio:checked + .net-tab { text-shadow: 0 0 6px rgba(207,220,255,0.6); }
 
 /* Auto-reset countdown banner (above the pros/cons of a mined network). */
 .reset-warning {

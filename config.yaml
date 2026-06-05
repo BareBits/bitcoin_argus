@@ -55,6 +55,9 @@ web:
     game: themes/game.css
     bootstrap: themes/bootstrap.css
   repo_url: https://github.com/BareBits/bitcoin_argus   # footer "run your own" link
+  operator_name: BareBits                                # footer "Hosted by <name>"
+  operator_url: https://getbarebits.com                  # link for the operator name
+  contact_email: sales@getbarebits.com                   # shown on the /contact page
 
 networks:
   # --- enabled by default ---------------------------------------------------

@@ -105,10 +105,19 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
     def index():
         payload, age = _load_metrics()
         sections = build_sections(cfg, port_map, payload, _ONION_HOSTNAME)
+        donations = build_donations(cfg, payload)
+        # Default-selected network tab: the first enabled network, falling back to
+        # the first network present (so a tab is always open).
+        default_tab = next(
+            (s.key for s in sections if s.enabled),
+            sections[0].key if sections else None,
+        )
         return render_template(
             "index.html",
             sections=sections,
-            donations=build_donations(cfg, payload),
+            donations=donations,
+            donations_by_key={d.key: d for d in donations},
+            default_tab=default_tab,
             when_columns=when_to_use_columns(net_keys),
             host=payload.get("host", {}),
             metrics_errors=payload.get("errors", []),
@@ -122,6 +131,10 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
     @app.route("/privacy")
     def privacy():
         return render_template("privacy.html")
+
+    @app.route("/contact")
+    def contact():
+        return render_template("contact.html")
 
     @app.route("/healthz")
     def healthz():
