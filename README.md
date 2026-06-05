@@ -18,6 +18,7 @@ that network.
 | **LND** (`argus1`, + `argus2` on mined nets) | Lightning node(s); on regtest/custom-signet two nodes are auto-funded and wired with channels | P2P open; gRPC/REST closed |
 | **Fulcrum** (≥1) | Electrum server for light wallets + mempool backend | Electrum port open |
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
+| **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **mempool** | Block explorer | HTTP via shared proxy |
 | **miner** (regtest / custom-signet) | Produces a (signed, for signet) block every minute | — |
@@ -88,6 +89,8 @@ python -m argus generate          # render enabled networks into generated/
 python -m argus credentials       # show admin logins (also written to a file)
 
 # 2. Deploy on the server (copy generated/ across, then per network)
+#    The first network's `up` builds the cashu.me wallet image from source
+#    (generated/cashu-wallet/) the first time — a few minutes; later nets reuse it.
 cd generated/regtest && docker compose up -d         # the core stack
 bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy

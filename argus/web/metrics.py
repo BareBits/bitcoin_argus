@@ -41,7 +41,18 @@ from ..constants import (
 # one of these (fulcrum indexers use their own name-derived bucket, see below).
 # "lnd2" precedes "lnd" so the optional second node + its sidecar are attributed
 # separately (substring match would otherwise fold "lnd2" into "lnd").
-_KEYWORD_BUCKETS = ("bitcoind", "miner", "lnd2", "lnd", "cashu", "mempool", "fulcrum")
+# "cashu-wallet" precedes "cashu" so the web wallet is attributed to its own
+# bucket (a substring match would otherwise fold "cashu-wallet" into "cashu").
+_KEYWORD_BUCKETS = (
+    "bitcoind",
+    "miner",
+    "lnd2",
+    "lnd",
+    "cashu-wallet",
+    "cashu",
+    "mempool",
+    "fulcrum",
+)
 
 
 def _split_net(rest: str) -> tuple[str | None, str]:

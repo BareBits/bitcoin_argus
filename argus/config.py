@@ -118,6 +118,12 @@ class GlobalConfig(_Base):
     lnd_image: str = "polarlightning/lnd:0.19.3-beta"
     fulcrum_image: str = "cculianu/fulcrum:v2.1.1"
     cashu_image: str = "cashubtc/nutshell:0.20.1"
+    # The cashu.me web wallet has no official published image, so Argus builds it
+    # from source (a self-contained build context under generated/cashu-wallet).
+    # This pins the cashu.me git ref (commit SHA or tag) the build clones; bump it
+    # to update the wallet. Defaults to a known-good commit that supports the
+    # ?mint= deep-link the dashboard relies on.
+    cashu_wallet_ref: str = "adc4e107e961ad2567bc8cac1b7a987352ffc259"
     caddy_image: str = "caddy:2"
     mempool_backend_image: str = "mempool/backend:v3.3.1"
     mempool_frontend_image: str = "mempool/frontend:v3.3.1"
@@ -232,6 +238,10 @@ class LndCfg(_Base):
 class CashuCfg(_Base):
     enabled: bool = True
     ssl: bool = True
+    # Deploy a co-located cashu.me web wallet alongside the mint, pointed at it.
+    # The wallet is a static PWA (built from source, see global.cashu_wallet_ref)
+    # served per network so each network's wallet state stays isolated by origin.
+    wallet: bool = True
     extra_env: dict[str, str] = Field(default_factory=dict)
 
 

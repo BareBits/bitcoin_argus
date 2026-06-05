@@ -14,6 +14,9 @@ global:
   # REQUIRED for mutinynet — a signetblocktime-capable bitcoind. No public
   # image exists; build one from MutinyWallet/mutiny-net or Bitcoin Knots:
   # bitcoind_knots_image: your-registry/bitcoind-signetblocktime:latest
+  # The cashu.me web wallet is built from source (no official image); this pins
+  # the git ref (commit SHA or tag) the build clones. Bump to update the wallet.
+  # cashu_wallet_ref: adc4e107e961ad2567bc8cac1b7a987352ffc259
   resources:                        # disk/RAM tuning (also settable per-network)
     profile: medium                 # low | medium | high (baseline knob values)
     log_rotation: true              # cap Docker json-file logs (10m x 3)
@@ -133,7 +136,9 @@ networks:
 #               # NOTE: on regtest the bitcoind P2P (mining) port stays CLOSED
 #               # until channel setup completes, then bitcoind reopens it
 #               # automatically — keeping funding safe from adversarial reorgs.
-#   cashu:    { enabled, ssl, extra_env: {...} }
+#   cashu:    { enabled, ssl, wallet, extra_env: {...} }
+#             wallet (default true): also deploy a co-located cashu.me web wallet
+#             pointed at this network's mint (set false to skip it).
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,
 #               liquidity: { disabled, automatic_channel_creation,

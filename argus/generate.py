@@ -8,6 +8,7 @@ import yaml
 
 from .bitcart import generate_bitcart
 from .builders import REGISTRY
+from .cashu_wallet import generate_cashu_wallet
 from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
 from .credentials import generate_credentials
@@ -146,6 +147,12 @@ def generate(
         generate_network(cfg, k, port_map[k], output_dir, secrets_dir, onion_hostname)
         for k in targets
     ]
+
+    # The shared cashu.me web-wallet build context (one image, reused by every
+    # network's per-net wallet container). Built from source; spans all networks.
+    wallet_dir = generate_cashu_wallet(cfg, output_dir)
+    if wallet_dir is not None:
+        dirs.append(wallet_dir)
 
     # The shared Caddy layer always reflects the full set of enabled networks.
     shared_dir = generate_shared(cfg, port_map, output_dir)

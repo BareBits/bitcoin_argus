@@ -71,6 +71,12 @@ def onion_routes(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[
                     net_key, "Cashu mint",
                     ports["cashu_public"], ports["cashu_backend"], "http",
                 ))
+                if net.cashu.wallet:
+                    routes.append(OnionRoute(
+                        net_key, "cashu.me (web wallet)",
+                        ports["cashu_wallet_public"], ports["cashu_wallet_backend"],
+                        "http",
+                    ))
             if net.mempool_enabled(spec):
                 routes.append(OnionRoute(
                     net_key, "mempool explorer",

@@ -218,6 +218,49 @@ def test_cashu_wired_to_lnd(tmp_path):
     assert "/bitcoin/regtest/admin.macaroon" in env["MINT_LND_REST_MACAROON"]
 
 
+def test_cashu_wallet_deployed_by_default(tmp_path):
+    # The cashu.me web wallet rides along with the mint: a per-network container
+    # off the shared build context, plus the shared build context itself.
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    svc = compose["services"]["cashu-wallet"]
+    assert svc["container_name"] == "argus-regtest-cashu-wallet"
+    assert svc["image"] == "argus-cashu-wallet:local"
+    assert svc["build"]["context"] == "../cashu-wallet"
+    # Closed to the internet (Caddy fronts it); served on the wallet backend port.
+    assert svc["ports"] == ["127.0.0.1:30111:80"]
+    # The shared build context is generated once, with a pinned source ref.
+    dockerfile = _read(out / "cashu-wallet" / "Dockerfile")
+    assert "git clone https://github.com/cashubtc/cashu.me" in dockerfile
+    assert "ARG CASHU_WALLET_REF" in dockerfile
+    assert svc["build"]["args"]["CASHU_WALLET_REF"]  # ref injected from config
+    assert (out / "cashu-wallet" / "nginx.conf").exists()
+
+
+def test_cashu_wallet_fronted_and_firewalled(tmp_path):
+    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    caddy = _read(out / "shared" / "Caddyfile")
+    # Wallet public port proxies to its loopback backend (plain http, ssl off).
+    assert "http://x.com:30101" in caddy
+    assert "reverse_proxy 127.0.0.1:30111" in caddy
+    fw = _read(out / "firewall.sh")
+    assert "ufw allow 30101/tcp" in fw and "cashu wallet" in fw
+
+
+def test_cashu_wallet_can_be_disabled(tmp_path):
+    # wallet: false keeps the mint but drops the wallet container, Caddy site,
+    # firewall rule, and the shared build context (nothing references it).
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "cashu": {"enabled": True, "wallet": False}}}))
+    compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
+    assert "cashu" in compose["services"]
+    assert "cashu-wallet" not in compose["services"]
+    assert not (out / "cashu-wallet").exists()
+    assert "30101" not in _read(out / "shared" / "Caddyfile")
+    assert "30101" not in _read(out / "firewall.sh")
+
+
 def test_mempool_network_mapping(tmp_path):
     out, _ = _gen(tmp_path, make({
         "regtest": {"enabled": True, "bitcart": BITCART_OFF},

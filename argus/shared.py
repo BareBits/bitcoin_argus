@@ -45,6 +45,18 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                     ssl=cfg.global_.ssl_enabled and net.cashu.ssl,
                 )
             )
+            if net.cashu.wallet:
+                # The co-located cashu.me web wallet, on its own public port so it
+                # is a distinct browser origin per network. It reuses the mint's
+                # SSL setting so the wallet and the mint it talks to share a scheme
+                # (an HTTPS wallet can't fetch an HTTP mint — mixed content).
+                sites.append(
+                    _HttpSite(
+                        public_port=ports["cashu_wallet_public"],
+                        backend_port=ports["cashu_wallet_backend"],
+                        ssl=cfg.global_.ssl_enabled and net.cashu.ssl,
+                    )
+                )
         if net.mempool_enabled(NETWORK_SPECS[net_key]):
             sites.append(
                 _HttpSite(

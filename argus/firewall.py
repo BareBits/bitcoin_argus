@@ -40,6 +40,10 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
 
         if net.cashu.enabled:
             rules.append((str(ports["cashu_public"]), f"{net_key} cashu"))
+            if net.cashu.wallet:
+                rules.append(
+                    (str(ports["cashu_wallet_public"]), f"{net_key} cashu wallet")
+                )
         if net.mempool_enabled(spec):
             rules.append((str(ports["mempool_public"]), f"{net_key} mempool"))
         if net.bitcart.enabled:
