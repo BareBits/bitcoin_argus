@@ -571,7 +571,8 @@ def test_generate_web_artifacts(tmp_path):
     # The source is copied in so the image build context is self-contained.
     assert (web_dir / "argus" / "web" / "app.py").is_file()
     compose = yaml.safe_load((web_dir / "docker-compose.yml").read_text())
-    assert set(compose["services"]) == {"web", "socket-proxy"}
+    # The faucet runs as a separate service in the same project (on by default).
+    assert set(compose["services"]) == {"web", "socket-proxy", "faucet"}
     # socket-proxy is read-only on the docker socket.
     assert "/var/run/docker.sock:/var/run/docker.sock:ro" in (
         compose["services"]["socket-proxy"]["volumes"]

@@ -114,6 +114,24 @@ def first_store(base: str, token: str) -> dict | None:
     return result[0]
 
 
+def wait_for_store(
+    base: str, token: str, *, attempts: int = 60, delay: int = 5
+) -> dict | None:
+    """Poll until the admin has a store, or give up after ``attempts``.
+
+    On a fresh install the store is created by the liquidity-helper plugin a
+    minute or two *after* the backend first answers, so we can't seed immediately
+    — we wait for it to appear, then seed the demo products into it."""
+    for i in range(attempts):
+        store = first_store(base, token)
+        if store:
+            return store
+        if i == 0:
+            log("waiting for the store to be created (by the liquidity helper)...")
+        time.sleep(delay)
+    return None
+
+
 def ensure_sats_currency(base: str, token: str, store: dict) -> str:
     """Switch a still-default (USD) store to SATS so prices mean sats."""
     cur = (store.get("default_currency") or "").upper()
@@ -194,9 +212,10 @@ def main() -> int:
     if not token:
         log("could not obtain an admin token; skipping seeding (non-fatal).")
         return 0
-    store = first_store(base, token)
+    store = wait_for_store(base, token)
     if not store:
-        log("admin has no store yet; nothing to seed into (non-fatal).")
+        log("no store appeared in time (the liquidity helper may still be "
+            "initialising); skipping seeding (non-fatal).")
         return 0
     sid = store["id"]
     log(f"seeding into store '{store.get('name')}' ({sid}).")

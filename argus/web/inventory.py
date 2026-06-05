@@ -208,6 +208,19 @@ def _service_rows(
             (metrics.get("lnd2") or {}).get(net_key),
         )
 
+    # The faucet (a separate container, path-routed at /<net>/faucet on the site
+    # root). The link is same-origin, so it carries no port and no onion variant
+    # (the onion bypasses Caddy's path routing — see argus/tor.py). Usage shows
+    # n/a: the faucet container (argus-faucet) isn't attributed to any one network.
+    if net.faucet.enabled:
+        rows.append(
+            row(
+                "Faucet and lightning functions",
+                "faucet",
+                links=[LinkRef("Open faucet", f"/{net_key}/faucet")],
+            )
+        )
+
     # Fulcrum indexers (Electrum servers).
     for i, ix in enumerate(net.enabled_indexers()):
         rows.append(

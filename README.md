@@ -91,6 +91,7 @@ python -m argus credentials       # show admin logins (also written to a file)
 # 2. Deploy on the server (copy generated/ across, then per network)
 #    The first network's `up` builds the cashu.me wallet image from source
 #    (generated/cashu-wallet/) the first time — a few minutes; later nets reuse it.
+cd generated/shared-tor && docker compose up -d       # Tor FIRST (if enabled) — see note
 cd generated/regtest && docker compose up -d         # the core stack
 bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy
@@ -101,6 +102,14 @@ sudo bash generated/firewall.sh                       # open the public ports
 #    ARGUS_DEPLOY_ROOT must be the ABSOLUTE host path to generated/.
 cd generated/reset && ARGUS_DEPLOY_ROOT="$(cd .. && pwd)" docker compose up -d --build
 ```
+
+> **With Tor enabled, bring up `generated/shared-tor` before the per-network
+> stacks.** Each network's secondary LND node runs in Tor mode and validates its
+> onion address through the shared SOCKS proxy at startup, so it needs the proxy
+> reachable. The per-network compose enforces this with a one-shot `*-tor-wait`
+> sidecar that gates the node on the proxy (timing out after 5 minutes), so a
+> slightly-out-of-order `up` self-corrects rather than crash-looping — but
+> starting Tor first avoids the wait entirely.
 
 On **regtest**, two LND nodes (`argus1` + `argus2`) come up, get funded 25 BTC
 each, and open a 10 BTC channel to each other. bitcoind keeps its P2P (mining)

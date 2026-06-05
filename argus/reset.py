@@ -151,8 +151,19 @@ if [ -n "$BC_CIDS" ]; then
   docker network connect "$PROJECT-net" "$BTCLND_CT" 2>/dev/null || true
   docker restart "$BTCLND_CT" >/dev/null 2>&1 || true
 fi
-
+{faucet_reset}
 echo "[reset:$NET] done — re-deployed to base config."
+"""
+
+
+# Inserted into reset.sh for networks whose faucet is on. The faucet is a
+# separate, long-lived container, so the core `down -v` above never touched its
+# data volume — purge this network's recorded payouts so the faucet's history
+# resets along with the chain it belongs to.
+_FAUCET_RESET = """
+echo "[reset:$NET] resetting faucet payout history..."
+docker exec argus-faucet python -m argus.faucet.reset "$NET" >/dev/null 2>&1 \\
+  || echo "[reset:$NET] faucet history reset skipped (faucet not running)"
 """
 
 
@@ -325,7 +336,12 @@ def generate_reset(cfg: ArgusConfig, output_dir: Path) -> Path | None:
         net_dir = output_dir / net_key
         net_dir.mkdir(parents=True, exist_ok=True)
         script = net_dir / "reset.sh"
-        script.write_text(_RESET_SH.format(net=net_key))
+        faucet_reset = (
+            _FAUCET_RESET if cfg.networks[net_key].faucet.enabled else ""
+        )
+        script.write_text(
+            _RESET_SH.format(net=net_key, faucet_reset=faucet_reset)
+        )
         script.chmod(0o755)
 
     # The controller project.

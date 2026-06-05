@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}{{ net_title }} Faucet — Bitcoin Argus{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* Self-contained faucet styling, driven by the active theme's CSS variables
+     (with safe fallbacks) so it looks at home in every theme — mirroring how the
+     dashboard's network tabs are styled inline. */
+  .faucet-grid { display: flex; flex-wrap: wrap; gap: 1.4rem; margin: 1.2rem 0; }
+  .faucet-form { flex: 1 1 22rem; }
+  .faucet-side { flex: 1 1 16rem; }
+  .faucet-field { margin-bottom: 0.9rem; }
+  .faucet-field label {
+    display: block; margin-bottom: 0.3rem; font-size: 0.8rem;
+    text-transform: uppercase; letter-spacing: 1px;
+    color: var(--accent, #0d6efd);
+  }
+  .faucet-field input {
+    width: 100%; box-sizing: border-box; padding: 0.55rem 0.7rem;
+    font-size: 1rem; font-family: inherit;
+    background: var(--bg, #0b1020); color: var(--fg, #e8ecf8);
+    border: 1px solid var(--line-bright, #888); border-radius: 3px;
+  }
+  .faucet-field input:focus {
+    outline: 2px solid var(--accent, #0d6efd); outline-offset: 1px;
+  }
+  .faucet-btn {
+    display: inline-block; cursor: pointer; padding: 0.55rem 1.4rem;
+    font-size: 0.95rem; font-family: inherit; text-transform: uppercase;
+    letter-spacing: 1px; border-radius: 3px;
+    background: var(--accent, #0d6efd); color: #fff;
+    border: 1px solid var(--accent, #0d6efd);
+  }
+  .faucet-btn:hover { filter: brightness(1.1); }
+  .faucet-balance .big { font-size: 1.6rem; font-weight: 600; }
+  .faucet-result {
+    margin: 1rem 0; padding: 0.8rem 1rem; border-radius: 3px;
+    border: 1px solid var(--line-bright, #888);
+  }
+  .faucet-result.success { border-color: #2ea043; background: rgba(46,160,67,0.12); }
+  .faucet-result.error   { border-color: #d1242f; background: rgba(209,36,47,0.12); }
+  .faucet-result.warn    { border-color: #d29922; background: rgba(210,153,34,0.12); }
+  .faucet-result code { word-break: break-all; }
+  .faucet-recent td, .faucet-recent th { font-size: 0.84rem; }
+  .faucet-recent .mono { word-break: break-all; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>{{ net_title }} Faucet &amp; Lightning functions</h1>
+  <p class="tagline">
+    Grab some <strong>{{ net_title }}</strong> test coins to build and test with.
+    These coins have <strong>no value</strong> — please
+    <strong>only take what you actually need</strong>, and
+    <strong>send anything left over back</strong> when you're done so the faucet
+    stays topped up for the next developer. ♻️
+  </p>
+</section>
+
+{% if reminder.address or reminder.lightning_address %}
+<div class="donate" style="margin: 1rem 0;">
+  <p class="cache-note">
+    💚 Done with your coins? Recycle them:
+    {% if reminder.address %}
+      send on-chain to <code class="donate-addr">{{ reminder.address }}</code>{% if reminder.lightning_address %}, or{% endif %}
+    {% endif %}
+    {% if reminder.lightning_address %}
+      pay the donate Lightning Address ⚡ <code class="donate-addr">{{ reminder.lightning_address }}</code>
+    {% endif %}.
+  </p>
+</div>
+{% endif %}
+
+{% if result %}
+  {% if result.status == 'success' %}
+  <div class="faucet-result success" role="status">
+    <strong>✅ {{ result.message }}</strong>
+    Sent <strong>{{ result.amount_btc }} BTC</strong> to
+    <code>{{ result.address }}</code>.<br>
+    Transaction:
+    {% if result.tx_url %}
+      <a href="{{ result.tx_url }}" target="_blank" rel="noopener"><code>{{ result.txid }}</code></a>
+    {% else %}
+      <code>{{ result.txid }}</code>
+    {% endif %}
+  </div>
+  {% elif result.status == 'payment_failure' %}
+  <div class="faucet-result error" role="alert">
+    <strong>⚠️ Payment failed.</strong> {{ result.message }}
+  </div>
+  {% elif result.status == 'invalid_address' %}
+  <div class="faucet-result error" role="alert">
+    <strong>⛔ {{ result.message }}</strong>
+  </div>
+  {% else %}
+  <div class="faucet-result warn" role="alert">
+    <strong>🚫 Request not approved.</strong> {{ result.message }}
+  </div>
+  {% endif %}
+{% endif %}
+
+<div class="faucet-grid">
+  <div class="faucet-form">
+    <form method="post" action="{{ request.path }}" autocomplete="off">
+      <div class="faucet-field">
+        <label for="faucet-address">Your {{ net_title }} address</label>
+        <input type="text" id="faucet-address" name="address"
+               value="{{ form_address }}" spellcheck="false"
+               placeholder="paste a {{ net_title }} on-chain address" required>
+      </div>
+      <div class="faucet-field">
+        <label for="faucet-amount">Amount (BTC)</label>
+        <input type="text" id="faucet-amount" name="amount"
+               value="{{ form_amount }}" inputmode="decimal"
+               placeholder="e.g. 0.01" required>
+      </div>
+      <button class="faucet-btn" type="submit">Request funds</button>
+    </form>
+    <p class="blurb">{{ explanation }}</p>
+  </div>
+
+  <div class="faucet-side">
+    <div class="faucet-balance">
+      <h4>Faucet balance</h4>
+      <p>
+        {% if balance_known %}
+          <span class="big">{{ balance_btc }}</span> BTC available
+        {% else %}
+          <span class="pending">balance unavailable…</span>
+        {% endif %}
+      </p>
+      <p class="cache-note">
+        This is the confirmed on-chain balance of the {{ net_title }} Lightning
+        node the faucet dispenses from.
+      </p>
+    </div>
+  </div>
+</div>
+
+<details class="host-totals" open>
+  <summary><span class="caret"></span><h2>Recent payouts</h2></summary>
+  {% if recent %}
+  <table class="svc-table faucet-recent">
+    <thead>
+      <tr><th>When</th><th>Amount</th><th>Transaction</th><th>Destination</th></tr>
+    </thead>
+    <tbody>
+      {% for p in recent %}
+      <tr>
+        <td>{{ p.when }}</td>
+        <td class="num">{{ p.amount_btc }} BTC</td>
+        <td class="mono">
+          {% if p.tx_url %}
+            <a href="{{ p.tx_url }}" target="_blank" rel="noopener">{{ p.txid }}</a>
+          {% else %}{{ p.txid }}{% endif %}
+        </td>
+        <td class="mono">
+          {% if p.address_url %}
+            <a href="{{ p.address_url }}" target="_blank" rel="noopener">{{ p.address }}</a>
+          {% else %}{{ p.address }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="cache-note">No payouts yet — be the first to grab some coins.</p>
+  {% endif %}
+</details>
+{% endblock %}

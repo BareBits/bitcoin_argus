@@ -183,6 +183,38 @@ def test_lnd_tor_split_primary_inbound_secondary_dials(tmp_path):
     assert socks_open_to_containers(cfg)  # the secondary dials over Tor
 
 
+def test_tor_mode_node_waits_for_socks_proxy(tmp_path):
+    """The Tor-mode secondary gets a one-shot sidecar that blocks its start until
+    the shared-tor SOCKS proxy is reachable, so the per-net stack can be brought up
+    before/with shared-tor without the node crash-looping on config validation."""
+    out, _ = _gen(tmp_path, _cfg({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load((out / "regtest" / "docker-compose.yml").read_text())
+    services = compose["services"]
+
+    # The primary (clearnet-only) has no wait sidecar; the secondary does.
+    assert "lnd-tor-wait" not in services
+    wait = services["lnd2-tor-wait"]
+    assert "argus-tor-host:host-gateway" in wait["extra_hosts"]
+    cmd = " ".join(wait["entrypoint"])
+    assert "nc -z" in cmd and "argus-tor-host 9050" in cmd
+    assert "$" not in cmd  # Compose interpolation must not mangle it
+    # lnd2 won't start until the wait completes.
+    assert services["lnd2"]["depends_on"]["lnd2-tor-wait"] == {
+        "condition": "service_completed_successfully"
+    }
+
+
+def test_no_tor_wait_sidecar_when_tor_off(tmp_path):
+    """With Tor off, the secondary isn't in Tor mode, so there's no wait sidecar."""
+    cfgp = tmp_path / "config.yaml"
+    cfgp.write_text(yaml.safe_dump(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})))
+    out = tmp_path / "gen"
+    generate(str(cfgp), output_dir=out, secrets_dir=tmp_path / "sec")
+    compose = yaml.safe_load((out / "regtest" / "docker-compose.yml").read_text())
+    assert "lnd2-tor-wait" not in compose["services"]
+    assert "lnd2" in compose["services"]  # the node itself still exists
+
+
 def test_channel_sidecar_connects_by_resolved_ip(tmp_path):
     """The auto-channel sidecar dials siblings by resolved IP so the Tor-mode
     secondary doesn't route a private hostname through Tor (which would fail)."""

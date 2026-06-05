@@ -380,7 +380,15 @@ def test_web_joins_per_net_networks_when_lnurl_on(tmp_path):
 
 def test_web_isolated_when_lnurl_off(tmp_path):
     data = make(
-        {"regtest": {"enabled": True, "bitcart": {"enabled": False}}},
+        {
+            "regtest": {
+                "enabled": True,
+                "bitcart": {"enabled": False},
+                # Disable the faucet too, so this tests pure web isolation: with
+                # both LNURL and the faucet off, nothing joins the per-net nets.
+                "faucet": {"enabled": False},
+            }
+        },
         ssl_enabled=True,
         hostname="faucet.example",
         acme_email="ops@example.com",
@@ -388,6 +396,7 @@ def test_web_isolated_when_lnurl_off(tmp_path):
     data["web"] = {"lnurl": {"enabled": False}}
     compose = _web_compose(tmp_path, data)
     assert compose["services"]["web"]["networks"] == ["web"]
+    assert "faucet" not in compose["services"]
     assert list(compose["networks"]) == ["web"]
 
 

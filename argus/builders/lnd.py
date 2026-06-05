@@ -209,6 +209,39 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Wait for the shared Tor SOCKS proxy before starting a Tor-mode node. LND in Tor
+# mode validates its onion ``externalip`` through the proxy at startup, so if the
+# per-network stack is brought up before the shared-tor stack, LND fails config
+# validation and crash-loops — taking its dependents (the channel sidecar) down
+# with it. This init sidecar gates the node's start on the proxy being reachable,
+# baking the "Tor first" ordering into compose. Deliberately NO ``$`` so Compose's
+# variable interpolation leaves it untouched; times out after 5m so a misconfigured
+# deploy doesn't hang ``up`` forever (the node then falls back to restart-retry).
+_TOR_WAIT_CMD = (
+    "timeout 300 sh -c 'until nc -z -w2 {alias} {port}; do "
+    "echo \"[tor-wait] waiting for the Tor SOCKS proxy at {alias}:{port} "
+    "(is the shared-tor stack up?)\"; sleep 2; done' "
+    "&& echo '[tor-wait] Tor SOCKS proxy reachable' "
+    "|| echo '[tor-wait] timed out after 5m; starting the node anyway'"
+).format(alias=TOR_SOCKS_HOST_ALIAS, port=TOR_SOCKS_PORT)
+
+
+def _tor_wait_service(ctx: BuildContext, node: _Node) -> dict:
+    """One-shot sidecar gating a Tor-mode node on the SOCKS proxy (see above).
+
+    Runs in the bitcoind image (its busybox has ``nc``; already pulled, so no new
+    image) and reaches the host-networked proxy via the same host-gateway alias the
+    node uses."""
+    return {
+        "image": "${BITCOIND_IMAGE}",
+        "container_name": f"{ctx.project}-{node.service}-tor-wait",
+        "restart": "no",
+        "entrypoint": ["/bin/sh", "-c", _TOR_WAIT_CMD],
+        "extra_hosts": [f"{TOR_SOCKS_HOST_ALIAS}:host-gateway"],
+        "networks": [ctx.network_name],
+    }
+
+
 def _node_service(ctx: BuildContext, node: _Node) -> dict:
     p = LND_INTERNAL_PORTS
     lnd_net = LND_NETWORK_KEY[ctx.spec.chain]
@@ -251,8 +284,13 @@ def _node_service(ctx: BuildContext, node: _Node) -> dict:
         # Secondary node only: reach the host-networked tor SOCKS proxy from this
         # bridged container via the host gateway. SOCKS itself is firewalled off
         # the public internet and further restricted by tor's SocksPolicy (private
-        # ranges only).
+        # ranges only). Gate startup on the proxy being reachable (see
+        # _tor_wait_service) so the node doesn't crash-loop when the shared-tor
+        # stack isn't up yet.
         service["extra_hosts"] = [f"{TOR_SOCKS_HOST_ALIAS}:host-gateway"]
+        service["depends_on"][f"{node.service}-tor-wait"] = {
+            "condition": "service_completed_successfully"
+        }
     return service
 
 
@@ -524,6 +562,10 @@ def build_lnd(ctx: BuildContext) -> Fragment:
         (conf_dir / "lnd.conf").write_text(_render_conf(ctx, node))
         (conf_dir / "nodeinfo.sh").write_text(_NODEINFO_SH)
         services[node.service] = _node_service(ctx, node)
+        # Tor-mode nodes get a one-shot sidecar that waits for the SOCKS proxy
+        # before they start (bakes the "shared-tor first" ordering into compose).
+        if _lnd_dials_over_tor(ctx, node):
+            services[f"{node.service}-tor-wait"] = _tor_wait_service(ctx, node)
         services[f"{node.service}-nodeinfo"] = _nodeinfo_service(
             ctx, node, write_addr=channels_on
         )
