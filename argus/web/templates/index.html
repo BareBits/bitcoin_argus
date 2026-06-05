@@ -1,6 +1,45 @@
 {% extends "base.html" %}
 {% block title %}Bitcoin Argus — testnet playground{% endblock %}
 
+{% block head_extra %}
+<style>
+  /* Network tabs — CSS-only, driven by hidden radio inputs. Colours come from
+     each theme's --tab-* variables (with safe fallbacks); layout is shared.
+     The radios sit before .net-panels so the general-sibling combinator can
+     reveal the matching panel, and immediately before their label so the
+     adjacent combinator can light the active/focused tab. */
+  .net-tabs { margin: 1.4rem 0; }
+  .net-tabs-heading { margin: 0 0 0.6rem; }
+  .net-tab-radio {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .net-tab {
+    display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;
+    vertical-align: top; padding: 0.4rem 0.85rem; margin: 0 0.3rem 0.4rem 0;
+    font-size: 0.88rem; user-select: none;
+    background: var(--tab-bg, #e9ecef); color: var(--tab-fg, #212529);
+    border: 1px solid var(--tab-border, #ccc);
+  }
+  .net-tab:hover { background: var(--tab-hover-bg, #dee2e6); }
+  .net-tab-disabled { opacity: 0.6; }
+  .net-tab-radio:focus-visible + .net-tab {
+    outline: 2px solid var(--tab-active-border, #0d6efd); outline-offset: 2px;
+  }
+  .net-tab-radio:checked + .net-tab {
+    background: var(--tab-active-bg, #0d6efd); color: var(--tab-active-fg, #fff);
+    border-color: var(--tab-active-border, #0d6efd); font-weight: 600;
+  }
+  .net-panels { clear: both; }
+  .net-panel { display: none; }
+  .net-donate { margin-top: 1.3rem; }
+  .net-donate .donate-table th { text-align: left; white-space: nowrap; }
+  {% for s in sections %}
+  #nettab-{{ s.key }}:checked ~ .net-panels #netpanel-{{ s.key }} { display: block; }
+  {% endfor %}
+</style>
+{% endblock %}
+
 {% block content %}
 <section class="hero">
   <h1>Welcome to the Bitcoin Argus testnet playground</h1>
@@ -120,99 +159,140 @@
 </details>
 {% endif %}
 
-{% for s in sections %}
-<details class="net-section{% if not s.enabled %} disabled{% endif %}" id="{{ s.key }}" open>
-  <summary class="net-head">
-    <span class="caret"></span>
-    <h2>{{ s.title }}</h2>
-    <span class="status status-{{ 'enabled' if s.enabled else 'disabled' }}">
-      {{ 'enabled' if s.enabled else 'disabled' }}
-    </span>
-  </summary>
-  <p class="blurb">{{ s.variant.blurb }}</p>
+<section class="net-tabs">
+  <h2 class="net-tabs-heading">Test networks</h2>
+  {% for s in sections %}
+  <input type="radio" name="net-tab" id="nettab-{{ s.key }}" class="net-tab-radio"
+         {% if s.key == default_tab %}checked{% endif %} aria-controls="netpanel-{{ s.key }}">
+  <label class="net-tab{% if not s.enabled %} net-tab-disabled{% endif %}" for="nettab-{{ s.key }}">
+    {{ s.title }}{% if not s.enabled %} <small>(disabled)</small>{% endif %}
+  </label>
+  {% endfor %}
 
-  {% if s.reset %}
-  <div class="reset-warning" role="note">
-    <span class="reset-icon" aria-hidden="true">⏳</span>
-    <span class="reset-text">
-      {% if s.reset.known %}
-        Network resets in <strong>{{ s.reset.eta_text }}</strong>
-      {% else %}
-        Network auto-resets at <strong>{{ s.reset.cap_text }} GB</strong> (estimating…)
-      {% endif %}
-    </span>
-    <span class="reset-help" tabindex="0" role="button"
-          aria-label="What does the reset countdown mean?">?<span class="reset-pop">This network <strong>automatically resets</strong> every {{ s.reset.cap_text }} GB. When it
-      does, it is wiped back to its base config and <strong>all old coins, Lightning
-      channels, and transactions become invalid</strong>.</span></span>
-  </div>
-  {% endif %}
-
-  <div class="proscons">
-    <div class="pros">
-      <h4>Pros</h4>
-      <ul>{% for p in s.variant.pros %}<li>{{ p }}</li>{% endfor %}</ul>
+  <div class="net-panels">
+  {% for s in sections %}
+  <section class="net-panel net-section{% if not s.enabled %} disabled{% endif %}"
+           id="netpanel-{{ s.key }}" role="tabpanel" aria-labelledby="nettab-{{ s.key }}">
+    <div class="net-head">
+      <h2>{{ s.title }}</h2>
+      <span class="status status-{{ 'enabled' if s.enabled else 'disabled' }}">
+        {{ 'enabled' if s.enabled else 'disabled' }}
+      </span>
     </div>
-    <div class="cons">
-      <h4>Cons</h4>
-      <ul>{% for c in s.variant.cons %}<li>{{ c }}</li>{% endfor %}</ul>
+    <p class="blurb">{{ s.variant.blurb }}</p>
+
+    {% if s.reset %}
+    <div class="reset-warning" role="note">
+      <span class="reset-icon" aria-hidden="true">⏳</span>
+      <span class="reset-text">
+        {% if s.reset.known %}
+          Network resets in <strong>{{ s.reset.eta_text }}</strong>
+        {% else %}
+          Network auto-resets at <strong>{{ s.reset.cap_text }} GB</strong> (estimating…)
+        {% endif %}
+      </span>
+      <span class="reset-help" tabindex="0" role="button"
+            aria-label="What does the reset countdown mean?">?<span class="reset-pop">This network <strong>automatically resets</strong> every {{ s.reset.cap_text }} GB. When it
+        does, it is wiped back to its base config and <strong>all old coins, Lightning
+        channels, and transactions become invalid</strong>.</span></span>
     </div>
-  </div>
+    {% endif %}
 
-  {% if s.enabled %}
-  <table class="svc-table">
-    <thead>
-      <tr>
-        <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>RAM</th><th>Disk</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for svc in s.services %}
-      <tr>
-        <td>{{ svc.name }}</td>
-        <td>
-          <span class="aud {{ 'aud-v' if svc.audience == 'Visitor' else 'aud-o' }}">{{ svc.audience }}</span>
-        </td>
-        <td>
-          {% for link in svc.links %}
-            <a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.label }}</a>{% if link.onion_url %}<span class="onion-copy" tabindex="0" role="button" data-onion="{{ link.onion_url }}" aria-label="Copy onion URL: {{ link.onion_url }}">🧅<span class="onion-pop"><code>{{ link.onion_url }}</code></span></span>{% endif %}{% if not loop.last %}, {% endif %}
-          {% else %}—{% endfor %}
-        </td>
-        <td>
-          {% for p in svc.ports %}
-            <span class="port {{ 'public' if p.public else 'closed' }}"
-                  title="{{ 'reachable by visitors' if p.public else 'operator only (server localhost)' }}">{{ p.label }}:{{ p.port }}</span>{% if not loop.last %} {% endif %}
-          {% endfor %}
-        </td>
-        <td class="num">{{ svc.ram|humanbytes }}</td>
-        <td class="num">{{ svc.disk|humanbytes }}</td>
-      </tr>
-      {% endfor %}
-      <tr class="totals">
-        <td colspan="4">Section total</td>
-        <td class="num">{{ s.ram_total|humanbytes }}</td>
-        <td class="num">{{ s.disk_total|humanbytes }}</td>
-      </tr>
-    </tbody>
-  </table>
+    <div class="proscons">
+      <div class="pros">
+        <h4>Pros</h4>
+        <ul>{% for p in s.variant.pros %}<li>{{ p }}</li>{% endfor %}</ul>
+      </div>
+      <div class="cons">
+        <h4>Cons</h4>
+        <ul>{% for c in s.variant.cons %}<li>{{ c }}</li>{% endfor %}</ul>
+      </div>
+    </div>
 
-  {% set vis = s.attach|selectattr('audience', 'equalto', 'visitor')|list %}
-  {% if vis %}
-  <div class="attach">
-    <h4>Attach your tools</h4>
-    {% for a in vis %}
-    <div class="attach-item attach-visitor">
-      <div class="attach-label">{{ a.label }}</div>
-      <pre class="cmd">{{ a.command }}{% if a.command_onion %}
+    {% if s.enabled %}
+    <table class="svc-table">
+      <thead>
+        <tr>
+          <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>RAM</th><th>Disk</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for svc in s.services %}
+        <tr>
+          <td>{{ svc.name }}</td>
+          <td>
+            <span class="aud {{ 'aud-v' if svc.audience == 'Visitor' else 'aud-o' }}">{{ svc.audience }}</span>
+          </td>
+          <td>
+            {% for link in svc.links %}
+              <a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.label }}</a>{% if link.onion_url %}<span class="onion-copy" tabindex="0" role="button" data-onion="{{ link.onion_url }}" aria-label="Copy onion URL: {{ link.onion_url }}">🧅<span class="onion-pop"><code>{{ link.onion_url }}</code></span></span>{% endif %}{% if not loop.last %}, {% endif %}
+            {% else %}—{% endfor %}
+          </td>
+          <td>
+            {% for p in svc.ports %}
+              <span class="port {{ 'public' if p.public else 'closed' }}"
+                    title="{{ 'reachable by visitors' if p.public else 'operator only (server localhost)' }}">{{ p.label }}:{{ p.port }}</span>{% if not loop.last %} {% endif %}
+            {% endfor %}
+          </td>
+          <td class="num">{{ svc.ram|humanbytes }}</td>
+          <td class="num">{{ svc.disk|humanbytes }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="totals">
+          <td colspan="4">Section total</td>
+          <td class="num">{{ s.ram_total|humanbytes }}</td>
+          <td class="num">{{ s.disk_total|humanbytes }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    {% set vis = s.attach|selectattr('audience', 'equalto', 'visitor')|list %}
+    {% if vis %}
+    <div class="attach">
+      <h4>Attach your tools</h4>
+      {% for a in vis %}
+      <div class="attach-item attach-visitor">
+        <div class="attach-label">{{ a.label }}</div>
+        <pre class="cmd">{{ a.command }}{% if a.command_onion %}
 🧅 {{ a.command_onion }}{% endif %}</pre>
-      {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
+        {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
+      </div>
+      {% endfor %}
     </div>
-    {% endfor %}
+    {% endif %}
+
+    {% set d = donations_by_key.get(s.key) %}
+    {% if d %}
+    <div class="net-donate donate">
+      <h4>💚 Donate / recycle your {{ d.title }} coins</h4>
+      <p class="cache-note">
+        Done with these test coins? Please send them back to the address below so
+        the faucet stays topped up for the next developer. ♻️
+      </p>
+      <table class="svc-table donate-table">
+        <tbody>
+          <tr>
+            <th>Donation address</th>
+            <td>{% if d.address %}<code class="donate-addr">{{ d.address }}</code>
+                {% else %}<span class="pending">pending…</span>{% endif %}</td>
+          </tr>
+          <tr>
+            <th>Total donated</th>
+            <td>{% if d.total_received is not none %}{{ d.total_received }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
+          </tr>
+          <tr>
+            <th>Current balance</th>
+            <td>{% if d.balance is not none %}{{ d.balance }} BTC{% else %}<span class="pending">pending…</span>{% endif %}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% endif %}
+  </section>
+  {% endfor %}
   </div>
-  {% endif %}
-  {% endif %}
-</details>
-{% endfor %}
+</section>
 
 {% if onion_hostname %}
 <details class="host-totals tor-intro" open>

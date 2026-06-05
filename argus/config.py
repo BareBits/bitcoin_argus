@@ -465,12 +465,31 @@ class WebCfg(_Base):
     )
     # Footer "run your own testnet install" link.
     repo_url: str = "https://github.com/BareBits/bitcoin_argus"
+    # Site operator shown in the footer ("Hosted by <name>") and the operator's
+    # site it links to. Override these to re-brand the dashboard for your install.
+    operator_name: str = "BareBits"
+    operator_url: str = "https://getbarebits.com"
+    # Address shown on the /contact page for testing feedback.
+    contact_email: str = "sales@getbarebits.com"
 
     @field_validator("port")
     @classmethod
     def _check_port(cls, v: int | None) -> int | None:
         if v is not None and not (1 <= v <= 65535):
             raise ValueError(f"web.port {v} out of range 1-65535")
+        return v
+
+    @field_validator("contact_email")
+    @classmethod
+    def _check_contact_email(cls, v: str) -> str:
+        # A light sanity check (not full RFC 5322): exactly one "@" with a local
+        # part and a dotted domain, and no whitespace/control chars that would
+        # break the mailto: link or allow header/markup injection.
+        if any(c.isspace() for c in v) or "<" in v or ">" in v:
+            raise ValueError(f"web.contact_email {v!r} contains invalid characters")
+        local, sep, domain = v.partition("@")
+        if not sep or not local or "@" in domain or "." not in domain:
+            raise ValueError(f"web.contact_email {v!r} is not a valid e-mail address")
         return v
 
     @model_validator(mode="after")

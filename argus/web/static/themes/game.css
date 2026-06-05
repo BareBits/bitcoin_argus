@@ -9,6 +9,14 @@
   --blue: #2038ec;
   --green: #1e9e3a;
   --gold: #fbd000;
+  /* Network tabs */
+  --tab-bg: #ffffff;
+  --tab-fg: #0b0b0b;
+  --tab-border: #0b0b0b;
+  --tab-hover-bg: #fff3b0;
+  --tab-active-bg: #fbd000;
+  --tab-active-fg: #0b0b0b;
+  --tab-active-border: #0b0b0b;
 }
 
 * { box-sizing: border-box; }
@@ -208,3 +216,11 @@ details[open] > summary > .caret { transform: rotate(90deg); }
 /* Donate / recycle section */
 .donate-addr { word-break: break-all; font-size: 0.85rem; }
 .donate .pending { opacity: 0.6; font-style: italic; }
+
+/* Network tabs — chunky blocky buttons with a hard offset shadow. */
+.net-tabs-heading { color: var(--blue); text-shadow: 2px 2px 0 var(--gold); }
+.net-tab {
+  border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--ink);
+  text-transform: uppercase; font-size: 0.8rem;
+}
+.net-tab-radio:checked + .net-tab { box-shadow: 1px 1px 0 var(--ink); }

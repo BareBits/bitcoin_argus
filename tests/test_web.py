@@ -45,6 +45,36 @@ def test_web_port_range_rejected():
         validated(data)
 
 
+def test_web_operator_and_contact_defaults():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    assert cfg.web.operator_name == "BareBits"
+    assert cfg.web.operator_url == "https://getbarebits.com"
+    assert cfg.web.contact_email == "sales@getbarebits.com"
+
+
+def test_web_operator_and_contact_overridable():
+    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
+    data["web"] = {
+        "operator_name": "Acme Labs",
+        "operator_url": "https://acme.example",
+        "contact_email": "hi@acme.example",
+    }
+    cfg = validated(data)
+    assert cfg.web.operator_name == "Acme Labs"
+    assert cfg.web.operator_url == "https://acme.example"
+    assert cfg.web.contact_email == "hi@acme.example"
+
+
+@pytest.mark.parametrize(
+    "bad", ["nope", "no@domain", "two@@at.com", "has space@x.com", "a@b<c>.com", ""]
+)
+def test_web_contact_email_validated(bad):
+    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
+    data["web"] = {"contact_email": bad}
+    with pytest.raises(Exception):
+        validated(data)
+
+
 # --- metrics name attribution ----------------------------------------------
 
 
@@ -597,8 +627,41 @@ def client(tmp_path):
 
 
 def test_routes_ok(client):
-    for path in ("/", "/tos", "/privacy", "/healthz"):
+    for path in ("/", "/tos", "/privacy", "/contact", "/healthz"):
         assert client.get(path).status_code == 200
+
+
+def test_contact_page_shows_email_and_copy(client):
+    body = client.get("/contact").get_data(as_text=True)
+    assert "mailto:sales@getbarebits.com" in body
+    assert "We welcome any and all testing feedback" in body
+
+
+def test_footer_uses_configured_operator(tmp_path):
+    from argus.web.app import create_app
+
+    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
+    data["web"] = {"operator_name": "Acme Labs", "operator_url": "https://acme.example"}
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(data))
+    app = create_app(config_path=str(cfg_path), cache_db=str(tmp_path / "c.db"))
+    body = app.test_client().get("/").get_data(as_text=True)
+    assert "Acme Labs" in body and "https://acme.example" in body
+    # Footer also links to the contact page.
+    assert 'href="/contact"' in body
+
+
+def test_index_renders_network_tabs(client):
+    # Each configured network gets a radio + a labelled tab/panel; the first
+    # enabled network's radio is checked by default.
+    body = client.get("/").get_data(as_text=True)
+    assert 'id="nettab-regtest"' in body
+    assert 'for="nettab-regtest"' in body
+    assert 'id="netpanel-regtest"' in body
+    # The per-network panel-reveal rule is generated into the page <style>.
+    assert "#nettab-regtest:checked ~ .net-panels #netpanel-regtest" in body
+    # The default (first enabled) network's radio is checked.
+    assert "checked" in body
 
 
 def test_theme_cookie_set(client):
