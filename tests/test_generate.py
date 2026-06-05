@@ -308,6 +308,26 @@ def test_bitcart_env(tmp_path):
     assert env["BTCLND_NEUTRINO_PEERS"] == "bitcoind:18444"
     assert env["BITCART_ADMIN_API_URL"] == "http://x.com:30202"  # ssl off => http
     assert env["LIQUIDITYHELPER_LIQUIDITY_DISABLED"] == "False"
+    # Cross-frontend origins so the store can reach the checkout app (admin port);
+    # bare host:port (the frontends add the scheme). Without these checkout 404s.
+    assert env["BITCART_STORE_HOST"] == "x.com:30200"
+    assert env["BITCART_ADMIN_HOST"] == "x.com:30201"
+
+
+def test_bitcart_cross_host_ssl(tmp_path):
+    # The host vars are bare host:port regardless of SSL (scheme added by the
+    # frontend); the API URL still carries the scheme.
+    out, _ = _gen(tmp_path, make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OK}},
+        ssl_enabled=True, acme_email="ops@x.com"))
+    env = dict(
+        line.split("=", 1)
+        for line in _read(out / "regtest" / "bitcart" / "bitcart.env").splitlines()
+        if "=" in line
+    )
+    assert env["BITCART_ADMIN_HOST"] == "x.com:30201"
+    assert env["BITCART_STORE_HOST"] == "x.com:30200"
+    assert env["BITCART_ADMIN_API_URL"] == "https://x.com:30202"
 
 
 def test_bitcart_products_seeded(tmp_path):
