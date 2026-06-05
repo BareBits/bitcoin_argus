@@ -319,6 +319,14 @@ to remember. HTTP services are routed straight to their plain-HTTP backend
 LND/bitcoind P2P route to their published port. Operator-only ports (Core RPC,
 LND gRPC/REST, Fulcrum admin) are never exposed.
 
+The one exception is the **dashboard's port 80**, which fronts both the dashboard
+and the per-network **faucet** (path-routed at `/<net>/faucet`). The faucet runs
+as a separate backend, so when a faucet is present the onion routes port 80
+through a small loopback-only Caddy site that re-applies that same path routing —
+keeping the faucet reachable over Tor at `http://<onion>/<net>/faucet`, the same
+path as on clearnet. (With no faucet, port 80 goes straight to the dashboard
+backend as above.)
+
 The onion key is **pre-generated and persisted** in `secrets/tor/` (a 32-byte
 seed → a stable `.onion`), so the address survives regeneration and is known
 ahead of deploy. Each **LND node also advertises its onion** in gossip

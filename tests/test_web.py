@@ -508,6 +508,11 @@ def test_build_sections_onion_population():
     mempool = next(s for s in section.services if s.name == "mempool explorer")
     port = port_map["regtest"]["mempool_public"]
     assert mempool.links[0].onion_url == f"http://{onion}:{port}/"
+    # The faucet rides the onion's port-80 path routing (no explicit port), so its
+    # onion link is the bare onion host with the same /<net>/faucet path.
+    faucet = next(s for s in section.services if "Faucet" in s.name)
+    assert faucet.links[0].url == "/regtest/faucet"
+    assert faucet.links[0].onion_url == f"http://{onion}/regtest/faucet"
     # Operator-only services (no public link) have no link to carry an onion URL.
     core = next(s for s in section.services if s.name == "Bitcoin Core node")
     assert core.links == []
@@ -597,6 +602,42 @@ def test_caddy_root_site_default():
     # ssl off (test helper) => http root, no port.
     assert "http://x.com {" in out
     assert "reverse_proxy 127.0.0.1:29080" in out
+
+
+def test_caddy_onion_site_path_routes_faucet():
+    # Tor on + a faucet => an onion-facing, loopback-bound site that mirrors the
+    # site root's path routing, so the faucet is reachable over Tor (the onion
+    # forwards port 80 here and can't path-route itself — see argus/tor.py).
+    cfg = validated(make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OFF,
+                     "faucet": {"enabled": True}}},
+        hostname="x.com", tor={"enabled": True},
+    ))
+    out = render_caddyfile(cfg, allocate(cfg))
+    assert ":29082 {" in out
+    # Inside that block: bound to loopback and path-routing the faucet backend.
+    onion_block = out.split(":29082 {", 1)[1]
+    assert "bind 127.0.0.1" in onion_block
+    assert "/regtest/faucet" in onion_block
+    assert "reverse_proxy 127.0.0.1:29081" in onion_block
+
+
+def test_caddy_no_onion_site_without_faucet_or_tor():
+    # No faucet => the onion routes straight to the dashboard backend (port 80 ->
+    # 29080 in tor.py), so no onion-facing Caddy site is needed.
+    cfg = validated(make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OFF,
+                     "faucet": {"enabled": False}}},
+        hostname="x.com", tor={"enabled": True},
+    ))
+    assert ":29082 {" not in render_caddyfile(cfg, allocate(cfg))
+    # Faucet present but Tor off => still no onion site.
+    cfg2 = validated(make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OFF,
+                     "faucet": {"enabled": True}}},
+        hostname="x.com",
+    ))
+    assert ":29082 {" not in render_caddyfile(cfg2, allocate(cfg2))
 
 
 def test_caddy_custom_port_and_ssl():
