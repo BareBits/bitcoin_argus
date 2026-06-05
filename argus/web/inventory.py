@@ -9,6 +9,7 @@ reach them — it mirrors the generators (builders + bitcart + shared Caddy).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
@@ -215,16 +216,40 @@ def _service_rows(
             )
         )
 
-    # Cashu mint.
+    # Cashu mint. The mint is an API, not a web page — its root 404s — so the
+    # link points at /v1/info (the NUT-06 mint-info endpoint), which returns valid
+    # JSON and confirms the mint is live. The cashu.me row below is the way to
+    # actually use the mint.
     if net.cashu.enabled:
         rows.append(
             row(
                 "Cashu mint",
                 "cashu",
                 ports=[PortRef("HTTP", ports["cashu_public"], public=True)],
-                links=[link("Mint", net.cashu.ssl, ports["cashu_public"])],
+                links=[link("Mint info", net.cashu.ssl, ports["cashu_public"], "v1/info")],
             )
         )
+        # Co-located cashu.me web wallet, pre-pointed at this network's mint via
+        # the ?mint= deep-link (opens cashu.me's add-mint dialog pre-filled). The
+        # onion variant embeds the *onion* mint URL so it resolves over Tor, and
+        # is offered only when both the wallet and the mint are on the onion.
+        if net.cashu.wallet:
+            mint_clear = _url(cfg, net.cashu.ssl, ports["cashu_public"])
+            wallet_clear = _url(cfg, net.cashu.ssl, ports["cashu_wallet_public"])
+            clear = f"{wallet_clear}?mint={quote(mint_clear, safe='')}"
+            wp, mp = ports["cashu_wallet_public"], ports["cashu_public"]
+            onion = None
+            if onion_hostname and wp in onion_ports and mp in onion_ports:
+                mint_onion = f"http://{onion_hostname}:{mp}/"
+                onion = f"http://{onion_hostname}:{wp}/?mint={quote(mint_onion, safe='')}"
+            rows.append(
+                row(
+                    "cashu.me (web wallet)",
+                    "cashu-wallet",
+                    ports=[PortRef("HTTP", ports["cashu_wallet_public"], public=True)],
+                    links=[LinkRef("Open wallet", clear, onion)],
+                )
+            )
 
     # mempool explorer.
     if net.mempool_enabled(spec):

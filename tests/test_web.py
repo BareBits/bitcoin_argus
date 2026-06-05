@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 import types
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -60,6 +61,8 @@ def test_web_port_range_rejected():
         ("argus-regtest-mempool-db", ("regtest", "mempool")),
         ("argus-regtest-mempool-web", ("regtest", "mempool")),
         ("argus-regtest-cashu", ("regtest", "cashu")),
+        # The web wallet gets its own bucket, not folded into "cashu".
+        ("argus-regtest-cashu-wallet", ("regtest", "cashu-wallet")),
         ("argus-custom-signet-bitcoind", ("custom-signet", "bitcoind")),
         ("argus-bitcart-regtest-btclnd-1", ("regtest", "bitcart")),
         ("argus-regtest_bitcoind_data", ("regtest", "bitcoind")),  # volume form
@@ -182,6 +185,16 @@ def test_build_sections_enabled_and_disabled():
     assert any(p.label == "P2P" and p.public for p in bitcoind.ports)
     cashu = next(s for s in rt.services if s.bucket == "cashu")
     assert cashu.audience == "Visitor"
+    # The mint links to /v1/info (its root 404s — it's an API, not a page).
+    assert cashu.links and cashu.links[0].url.endswith("/v1/info")
+    # The cashu.me wallet row links to the wallet, pre-pointed at this mint via
+    # the ?mint= deep-link (URL-encoded mint URL).
+    wallet = next(s for s in rt.services if s.bucket == "cashu-wallet")
+    assert wallet.name == "cashu.me (web wallet)"
+    assert wallet.audience == "Visitor"
+    wlink = wallet.links[0].url
+    assert ":30101/?mint=" in wlink
+    assert quote("http://x.com:30100/", safe="") in wlink
     miner = next(s for s in rt.services if s.bucket == "miner")
     assert miner.audience == "Operator only"  # block production is operator-controlled
 

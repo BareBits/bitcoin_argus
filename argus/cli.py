@@ -72,7 +72,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
         return 0
     print("Generated:")
     for d in out_dirs:
-        print(f"  {d}/docker-compose.yml")
+        # Most outputs are compose projects; a few (e.g. the cashu.me wallet build
+        # context) are referenced by other projects and have no compose of their own.
+        compose = d / "docker-compose.yml"
+        print(f"  {compose}" if compose.exists() else f"  {d}/ (build context)")
     return 0
 
 

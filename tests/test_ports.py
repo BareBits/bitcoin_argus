@@ -24,6 +24,8 @@ def test_default_offsets():
     assert p["lnd2_grpc"] == 30015
     assert p["fulcrum_0_electrum_tcp"] == 30040
     assert p["cashu_public"] == 30100
+    assert p["cashu_wallet_public"] == 30101
+    assert p["cashu_wallet_backend"] == 30111
     assert p["mempool_public"] == 30300
 
 

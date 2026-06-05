@@ -13,6 +13,7 @@ from typing import Callable
 from ..context import BuildContext, Fragment
 from .bitcoind import build_bitcoind
 from .cashu import build_cashu
+from .cashu_wallet import build_cashu_wallet
 from .donations import build_donations
 from .fulcrum import build_fulcrum
 from .lnd import build_lnd
@@ -34,6 +35,11 @@ REGISTRY: list[SubTool] = [
     SubTool("lnd", build_lnd, lambda c: True),
     SubTool("fulcrum", build_fulcrum, lambda c: bool(c.net.enabled_indexers())),
     SubTool("cashu", build_cashu, lambda c: c.net.cashu.enabled),
+    SubTool(
+        "cashu-wallet",
+        build_cashu_wallet,
+        lambda c: c.net.cashu.enabled and c.net.cashu.wallet,
+    ),
     SubTool("mempool", build_mempool, lambda c: c.net.mempool_enabled(c.spec)),
     SubTool(
         "miner",

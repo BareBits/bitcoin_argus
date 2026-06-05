@@ -148,12 +148,14 @@ PORT_OFFSETS: dict[str, int] = {
     # not single ports.
     # Caddy public listeners for HTTP services:
     "cashu_public": 100,
+    "cashu_wallet_public": 101,  # co-located cashu.me web wallet (per network)
     "bitcart_store_public": 200,
     "bitcart_admin_public": 201,
     "bitcart_api_public": 202,
     "mempool_public": 300,
     # Backend loopback ports (Caddy proxies to these):
     "cashu_backend": 110,
+    "cashu_wallet_backend": 111,  # the per-network cashu.me nginx loopback port
     "bitcart_store": 210,
     "bitcart_admin": 211,
     "bitcart_api": 212,
