@@ -52,6 +52,27 @@ def _env_lines(
 
     scheme = "https" if (g.ssl_enabled and bc.ssl) else "http"
     api_url = f"{scheme}://{g.hostname}:{ports['bitcart_api_public']}"
+
+    # This network's LNURL Lightning Addresses, wired into its liquidity-helper
+    # plugin so cashouts, the dev fee, and the referral/hosting fee all settle to
+    # this network's *own* LND node #1 (btclnd can only pay an invoice on its own
+    # chain). Available only when web.lnurl is on AND clearnet HTTPS is up, since
+    # btclnd resolves the address over https. Bare ``<purpose>@host`` for the
+    # default network, ``<purpose>-<net>@host`` elsewhere.
+    lnurl = cfg.web.lnurl
+    lnurl_default_net = lnurl.default_network or next(
+        (k for k, _ in cfg.enabled_networks()), None
+    )
+    lnurl_on = cfg.web.enabled and lnurl.enabled and g.ssl_enabled
+
+    def _ln_addr(purpose: str) -> str:
+        local = purpose if net_key == lnurl_default_net else f"{purpose}-{net_key}"
+        return f"{local}@{g.hostname}"
+
+    # An explicit operator cash-out address still wins; otherwise LNURL supplies it.
+    cashout_addr = bc.liquidity.cashout_lightning_address or (
+        _ln_addr("cashout") if lnurl_on else ""
+    )
     # Public origins (bare host:port) of the store and admin/checkout frontends,
     # which the shared Caddy fronts on their own ports. The store frontend needs
     # the admin host to send shoppers to the checkout page (/i/<id>, served by the
@@ -77,7 +98,7 @@ def _env_lines(
         "BITCART_HOST": g.hostname,
         "BITCART_ADMIN_EMAIL": bc.admin_email or "",
         "BITCART_ADMIN_PASSWORD": secrets["BITCART_ADMIN_PASSWORD"],
-        "CASHOUT_LIGHTNING_ADDRESS": bc.liquidity.cashout_lightning_address or "",
+        "CASHOUT_LIGHTNING_ADDRESS": cashout_addr,
         # component ports (bind to these; the shared Caddy fronts the public ones)
         "BITCART_STORE_PORT": str(ports["bitcart_store"]),
         "BITCART_ADMIN_PORT": str(ports["bitcart_admin"]),
@@ -100,7 +121,17 @@ def _env_lines(
             bc.liquidity.automatic_channel_creation
         ),
         "LIQUIDITYHELPER_LOG_LEVEL": bc.liquidity.log_level,
+        # Referral/hosting fee rate (additive on the dev fee). 0.0 = inert; its
+        # destination is the referral LNURL address wired below.
+        "LIQUIDITYHELPER_REFERRAL_FEE_AMOUNT": str(bc.liquidity.referral_fee_amount),
     }
+    # Point the plugin's dev-fee and referral-fee payouts at this network's own
+    # LNURL addresses (testnet self-contained). CASHOUT is set above (it has the
+    # operator-override path); these two have no operator field, so they are only
+    # set when LNURL can supply a resolvable clearnet address.
+    if lnurl_on:
+        env["LIQUIDITYHELPER_LN_FEE_DEST"] = _ln_addr("fees")
+        env["LIQUIDITYHELPER_REFERRAL_FEE_DEST"] = _ln_addr("referral")
     if extra_args:
         env["BTCLND_LND_EXTRA_ARGS"] = " ".join(extra_args)
 

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import os
 
-from flask import Flask, g, render_template, request, url_for
+from flask import Flask, g, jsonify, render_template, request, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ..config import ArgusConfig, load_config
 from ..ports import allocate
 from . import cache, metrics
 from .content import when_to_use_columns
 from .inventory import build_donations, build_sections
+from .lnurl import LnurlError, LnurlService
 
 _DEFAULT_CONFIG = os.environ.get("CONFIG_PATH", "config.yaml")
 # Set by the generated dashboard compose when Tor is enabled (see web_gen.py).
@@ -45,9 +47,16 @@ def _human_bytes(value) -> str:
 
 def create_app(config_path: str | None = None, cache_db: str | None = None) -> Flask:
     app = Flask(__name__)
+    # Honour the shared Caddy's X-Forwarded-Proto/Host so externally-built URLs
+    # (the LNURL callback) carry the public https scheme + hostname. Over the
+    # onion, tor forwards straight to gunicorn with no proxy headers, so the
+    # request's own http scheme + onion host are used instead — both correct.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
     cfg: ArgusConfig = load_config(config_path or _DEFAULT_CONFIG)
     port_map = allocate(cfg)
     cache.init_db(cache_db)
+
+    lnurl = LnurlService(cfg)
 
     app.jinja_env.filters["humanbytes"] = _human_bytes
 
@@ -105,7 +114,7 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
     def index():
         payload, age = _load_metrics()
         sections = build_sections(cfg, port_map, payload, _ONION_HOSTNAME)
-        donations = build_donations(cfg, payload)
+        donations = build_donations(cfg, payload, _ONION_HOSTNAME)
         # Default-selected network tab: the first enabled network, falling back to
         # the first network present (so a tab is always open).
         default_tab = next(
@@ -135,6 +144,37 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
     @app.route("/contact")
     def contact():
         return render_template("contact.html")
+
+    # ------------------------------------------------------------------
+    # LNURL-pay / Lightning Address (LUD-06 + LUD-16). Served from the site
+    # root so fees@/cashout@/donate@/referral@<hostname> resolve here, and over
+    # the onion for free (same app). See argus/web/lnurl.py.
+    # ------------------------------------------------------------------
+    @app.route("/.well-known/lnurlp/<name>")
+    def lnurlp(name: str):
+        if not lnurl.enabled:
+            return jsonify(status="ERROR", reason="LNURL is not enabled"), 404
+        callback = url_for("lnurlp_callback", name=name, _external=True)
+        try:
+            return jsonify(lnurl.pay_request(name, request.host, callback))
+        except LnurlError as exc:
+            return jsonify(status="ERROR", reason=str(exc)), 404
+
+    @app.route("/lnurlp/<name>/callback")
+    def lnurlp_callback(name: str):
+        if not lnurl.enabled:
+            return jsonify(status="ERROR", reason="LNURL is not enabled"), 404
+        amount = request.args.get("amount", type=int)
+        if amount is None:
+            return jsonify(status="ERROR", reason="missing or invalid amount"), 400
+        comment = request.args.get("comment")
+        try:
+            pr = lnurl.invoice(name, request.host, amount, comment)
+        except LnurlError as exc:
+            # LUD-06 errors are reported as 200 + {status: ERROR} so wallets read
+            # the reason; the name itself was syntactically valid to route here.
+            return jsonify(status="ERROR", reason=str(exc))
+        return jsonify(pr=pr, routes=[])
 
     @app.route("/healthz")
     def healthz():

@@ -260,7 +260,20 @@ class BitcartLiquidityCfg(_Base):
     disabled: bool = False  # LIQUIDITYHELPER_LIQUIDITY_DISABLED (False = on)
     automatic_channel_creation: bool = True  # …_AUTOMATIC_CHANNEL_CREATION_ENABLED
     cashout_lightning_address: str | None = None  # CASHOUT_LIGHTNING_ADDRESS (required)
+    # Referral/hosting fee, additive on top of the dev fee (0.0 = off). Its
+    # destination is auto-supplied as the referral LNURL address when web.lnurl
+    # is on (LIQUIDITYHELPER_REFERRAL_FEE_DEST); raise this above 0 to activate.
+    referral_fee_amount: float = 0.0  # LIQUIDITYHELPER_REFERRAL_FEE_AMOUNT
     log_level: str = "INFO"  # LIQUIDITYHELPER_LOG_LEVEL
+
+    @field_validator("referral_fee_amount")
+    @classmethod
+    def _check_referral_fee(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(
+                f"bitcart.liquidity.referral_fee_amount {v} must be in 0.0..1.0"
+            )
+        return v
 
 
 class BitcartSmtpCfg(_Base):
@@ -441,6 +454,55 @@ class NetworkCfg(_Base):
         return False
 
 
+class WebLnurlCfg(_Base):
+    """LNURL-pay / Lightning Address support served by the dashboard.
+
+    When enabled, the dashboard answers the LUD-06/LUD-16 endpoints under
+    ``/.well-known/lnurlp/<name>`` and mints invoices on each network's *primary*
+    LND node (node #1). Four purposes are served — ``fees``, ``cashout``,
+    ``donate`` and ``referral`` — each as a bare address (backed by
+    ``default_network``) and a per-network variant ``<purpose>-<net>@<hostname>``
+    so a payer's wallet can target the matching chain. The cashout/fees/referral
+    addresses are wired into each network's Bitcart liquidity-helper plugin (see
+    :mod:`argus.bitcart`); ``donate`` is the public donation address shown on the
+    dashboard. The four names are otherwise identical — they differ only in the
+    invoice memo.
+    """
+
+    enabled: bool = True
+    # Network backing the BARE addresses (fees@/cashout@/donate@/referral@).
+    # None => the first enabled network in canonical order.
+    default_network: str | None = None
+    min_sat: int = 1
+    max_sat: int = 5_000_000  # 0.05 BTC — generous for valueless testnet coins.
+    # LUD-12 comment length advertised (0 disables comments). The liquidity plugin
+    # sends a `storeid:<id>` attribution comment, so keep this > 0 to accept it.
+    comment_length: int = 255
+
+    @field_validator("min_sat", "max_sat")
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("web.lnurl.min_sat / max_sat must be >= 1")
+        return v
+
+    @field_validator("comment_length")
+    @classmethod
+    def _comment_len(cls, v: int) -> int:
+        if not (0 <= v <= 1000):
+            raise ValueError("web.lnurl.comment_length must be in 0..1000")
+        return v
+
+    @model_validator(mode="after")
+    def _check_bounds(self) -> "WebLnurlCfg":
+        if self.max_sat < self.min_sat:
+            raise ValueError(
+                f"web.lnurl.max_sat ({self.max_sat}) must be >= min_sat "
+                f"({self.min_sat})"
+            )
+        return self
+
+
 class WebCfg(_Base):
     """The Argus dashboard: a host-global web server fronted by the shared Caddy.
 
@@ -471,6 +533,8 @@ class WebCfg(_Base):
     operator_url: str = "https://getbarebits.com"
     # Address shown on the /contact page for testing feedback.
     contact_email: str = "sales@getbarebits.com"
+    # LNURL-pay / Lightning Address support (fees@/cashout@/donate@/referral@).
+    lnurl: WebLnurlCfg = Field(default_factory=WebLnurlCfg)
 
     @field_validator("port")
     @classmethod
@@ -615,13 +679,37 @@ class ArgusConfig(_Base):
             if net.bitcart.enabled:
                 if not net.bitcart.admin_email:
                     errors.append(f"[{key}] bitcart.admin_email is required")
+                # The cash-out address can be supplied explicitly OR auto-wired
+                # from the network's own ``cashout-<net>`` LNURL address — but the
+                # latter only resolves for paying wallets over clearnet HTTPS, so
+                # it counts as "supplied" only when SSL + the dashboard + LNURL are
+                # all on.
+                lnurl_supplies_cashout = (
+                    self.global_.ssl_enabled
+                    and self.web.enabled
+                    and self.web.lnurl.enabled
+                )
                 if (
                     not net.bitcart.liquidity.disabled
                     and not net.bitcart.liquidity.cashout_lightning_address
+                    and not lnurl_supplies_cashout
                 ):
                     errors.append(
                         f"[{key}] bitcart.liquidity.cashout_lightning_address is "
-                        f"required when liquidity is enabled (liquidity.disabled=false)"
+                        f"required when liquidity is enabled (liquidity.disabled="
+                        f"false) unless web.lnurl is on with ssl_enabled"
+                    )
+                # The referral/hosting fee's destination is the referral LNURL
+                # address (there is no operator field for it), which only resolves
+                # over clearnet HTTPS — so a non-zero rate needs LNURL + SSL.
+                if (
+                    net.bitcart.liquidity.referral_fee_amount > 0
+                    and not lnurl_supplies_cashout
+                ):
+                    errors.append(
+                        f"[{key}] bitcart.liquidity.referral_fee_amount > 0 needs "
+                        f"web.lnurl on with ssl_enabled (it supplies the referral "
+                        f"payout address)"
                     )
 
             # track whether any internet-facing SSL service exists (needs ACME email)
@@ -640,6 +728,19 @@ class ArgusConfig(_Base):
                 "global.acme_email is required when ssl_enabled is true and a public "
                 "network has an SSL-enabled service (Let's Encrypt needs an email)"
             )
+
+        # The LNURL default network (backing the bare fees@/cashout@/donate@/
+        # referral@ addresses) must be an enabled network if pinned explicitly.
+        dn = self.web.lnurl.default_network
+        if self.web.enabled and self.web.lnurl.enabled and dn is not None:
+            if dn not in self.networks:
+                errors.append(
+                    f"web.lnurl.default_network {dn!r} is not a configured network"
+                )
+            elif not self.networks[dn].enabled:
+                errors.append(
+                    f"web.lnurl.default_network {dn!r} is not enabled"
+                )
 
         if errors:
             raise ConfigError(

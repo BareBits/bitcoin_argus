@@ -43,7 +43,7 @@ def _dockerfile() -> str:
     )
 
 
-def _compose(onion_hostname: str | None) -> dict:
+def _compose(onion_hostname: str | None, lnd_net_keys: list[str]) -> dict:
     web_env = {
         "DOCKER_HOST": "tcp://socket-proxy:2375",
         "CONFIG_PATH": "/app/config.yaml",
@@ -55,6 +55,21 @@ def _compose(onion_hostname: str | None) -> dict:
     # doesn't require a rebuild; absent => the Tor UI is simply omitted.
     if onion_hostname:
         web_env["ONION_HOSTNAME"] = onion_hostname
+
+    # The dashboard joins each enabled network's compose network (declared
+    # external) so it can mint LNURL invoices on that network's primary LND node,
+    # reaching it by its unique container name (argus-<net>-lnd) over REST. The
+    # `argus` service alias is NOT usable here: every per-net LND shares it, so it
+    # would collide across the networks the dashboard joins. The networks own
+    # their own auth (the invoice macaroon is read separately); joining them only
+    # grants L3 reachability. Aliased locally as `net-<key>` -> argus-<key>-net.
+    web_networks = ["web"]
+    extra_networks: dict[str, dict] = {}
+    for key in lnd_net_keys:
+        alias = f"net-{key}"
+        web_networks.append(alias)
+        extra_networks[alias] = {"name": f"argus-{key}-net", "external": True}
+
     return {
         "name": "argus-web",
         "services": {
@@ -100,11 +115,11 @@ def _compose(onion_hostname: str | None) -> dict:
                 ],
                 # Closed to the internet; the shared Caddy fronts it.
                 "ports": [f"127.0.0.1:{WEB_BACKEND_PORT}:{_GUNICORN_PORT}"],
-                "networks": ["web"],
+                "networks": web_networks,
             },
         },
         "volumes": {"web_cache": {}},
-        "networks": {"web": {"name": "argus-web-net"}},
+        "networks": {"web": {"name": "argus-web-net"}, **extra_networks},
     }
 
 
@@ -134,7 +149,12 @@ def generate_web(
     out_dir = output_dir / "web"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    compose = _compose(onion_hostname)
+    # Join each enabled network's compose network only when LNURL is on (the
+    # dashboard mints invoices on their LND nodes); otherwise stay isolated.
+    lnd_net_keys = (
+        [k for k, _ in cfg.enabled_networks()] if cfg.web.lnurl.enabled else []
+    )
+    compose = _compose(onion_hostname, lnd_net_keys)
     rotation, log_block = global_log(cfg)
     if rotation:
         for svc in compose["services"].values():

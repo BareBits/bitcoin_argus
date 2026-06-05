@@ -134,6 +134,40 @@ each running service, and shows live per-service and whole-host disk/RAM usage.
   serve elsewhere. The dashboard's runtime deps are the `web` extra
   (`pip install -e ".[web]"`) / `argus/web/requirements.txt`.
 
+### LNURL / Lightning Address
+
+With `web.lnurl.enabled` (on by default) the dashboard also serves
+**LNURL-pay / Lightning Address** endpoints (LUD-06 + LUD-16) at the site root,
+so it answers:
+
+| Address | Purpose |
+|---|---|
+| `donate@<hostname>` | public donation address (also shown in the donations table) |
+| `cashout@<hostname>` | wired into each network's Bitcart liquidity-helper cash-out |
+| `fees@<hostname>` | the liquidity-helper **developer-fee** payout |
+| `referral@<hostname>` | the liquidity-helper **referral/hosting-fee** payout |
+
+Because one hostname fronts every testnet but a paying wallet lives on one
+specific chain, each name is also exposed **per network** as
+`<purpose>-<net>@<hostname>` (e.g. `donate-signet@…`, `cashout-testnet4@…`); the
+bare form maps to `web.lnurl.default_network` (default: the first enabled
+network). All four mint a fresh invoice on that network's **primary LND node
+(node #1)** — they differ only in the invoice memo.
+
+The public web container holds no long-lived LND credentials: it reads each
+node's **invoice-only** macaroon + TLS cert through the read-only socket proxy
+(`get_archive`, a GET) and POSTs `addinvoice` to the node's REST API over the
+per-network Docker network (which it joins), dialling the unique `argus-<net>-lnd`
+container name (LND's cert carries it as a SAN). The invoice macaroon cannot move
+funds, and the socket proxy stays GET-only.
+
+> Clearnet Lightning Addresses need `ssl_enabled` (the paying wallet resolves
+> them over **https**); the `.onion` forms work over http when Tor is on. The
+> `cashout`/`fees`/`referral` addresses are auto-wired into each network's Bitcart
+> liquidity-helper plugin on deploy — so on a self-contained testnet, cashouts and
+> fees settle back to that network's own node #1. Set
+> `bitcart.liquidity.referral_fee_amount > 0` to activate the referral fee.
+
 ## Bitcart
 
 Bitcart is deployed by the **BareBits installer** (`deploy_bitcart_liquidity_lnd`),

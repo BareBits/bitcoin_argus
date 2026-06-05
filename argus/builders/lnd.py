@@ -132,8 +132,15 @@ def _render_conf(ctx: BuildContext, node: _Node) -> str:
         f"rpclisten=0.0.0.0:{p['grpc']}",
         f"restlisten=0.0.0.0:{p['rest']}",
         # Make the TLS cert valid for in-container/loopback clients (Cashu, the
-        # node-info + channel sidecars) that reach the node by its service name.
+        # node-info + channel sidecars) that reach the node by its service name,
+        # plus the unique container name (argus-<net>-lnd) the dashboard uses for
+        # LNURL invoice minting — the bare `lnd` alias collides across the per-net
+        # networks the dashboard joins, so it must dial the container name and
+        # verify TLS against it. tlsautorefresh regenerates the cert in place when
+        # this domain set changes, so existing deployments pick up the new SAN.
         f"tlsextradomain={node.service}",
+        f"tlsextradomain={ctx.project}-{node.service}",
+        "tlsautorefresh=true",
         # Channel-friendliness: accept spontaneous payments and (optionally) make
         # the node discoverable + open to large/small channels from peers.
         "accept-keysend=true",
