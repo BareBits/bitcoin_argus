@@ -15,8 +15,11 @@ shared Caddy fronts the store/admin/api ports (see argus.shared).
 
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
+from .bitcart_cards import ASSETS_DIR, png_paths, product_manifest
 from .config import ArgusConfig
 from .constants import (
     BITCART_BTCLND_GRPC_OFFSET,
@@ -135,6 +138,15 @@ BTCLND_CT="$DEPLOY_NAME-btclnd-1"
 docker network connect "$ARGUS_NET" "$BTCLND_CT" 2>/dev/null || true
 docker restart "$BTCLND_CT" >/dev/null 2>&1 || true
 
+# Seed the placeholder demo products (trading cards) into the store. Idempotent
+# and non-fatal: needs the backend API up and uses the admin creds + backend
+# port already sourced from bitcart.env above.
+if [ -f "$HERE/products/seed-products.py" ]; then
+    echo "Seeding demo products into Bitcart [$NET]..."
+    python3 "$HERE/products/seed-products.py" \\
+        || echo "WARNING: demo product seeding did not finish (non-fatal)."
+fi
+
 echo "Bitcart [$NET] deployed; btclnd attached to $ARGUS_NET."
 """
 
@@ -162,4 +174,27 @@ def generate_bitcart(
     script_path = out_dir / "deploy-bitcart.sh"
     script_path.write_text(_WRAPPER.format(net=net_key, repo=_DEPLOY_REPO))
     script_path.chmod(0o755)
+
+    _write_products(out_dir)
     return out_dir
+
+
+def _write_products(out_dir: Path) -> Path:
+    """Stage the demo-product assets the wrapper seeds after deploy.
+
+    Copies the rendered card PNGs, a JSON manifest (name/price/description),
+    and the idempotent seeding script into ``<net>/bitcart/products/``.
+    """
+    products_dir = out_dir / "products"
+    products_dir.mkdir(parents=True, exist_ok=True)
+
+    for png in png_paths():
+        shutil.copy2(png, products_dir / png.name)
+
+    manifest = products_dir / "manifest.json"
+    manifest.write_text(json.dumps(product_manifest(), indent=2) + "\n")
+
+    seed_dst = products_dir / "seed-products.py"
+    shutil.copy2(ASSETS_DIR / "seed_products.py", seed_dst)
+    seed_dst.chmod(0o755)
+    return products_dir
