@@ -20,10 +20,10 @@ from pathlib import Path
 import yaml
 
 from .config import ArgusConfig
-from .constants import WEB_BACKEND_PORT
+from .constants import FAUCET_BACKEND_PORT, WEB_BACKEND_PORT
 from .resources import global_log
 
-_GUNICORN_PORT = 8000  # in-container listen port
+_GUNICORN_PORT = 8000  # in-container listen port (dashboard and faucet alike)
 
 
 def _dockerfile() -> str:
@@ -43,7 +43,11 @@ def _dockerfile() -> str:
     )
 
 
-def _compose(onion_hostname: str | None, lnd_net_keys: list[str]) -> dict:
+def _compose(
+    onion_hostname: str | None,
+    lnd_net_keys: list[str],
+    faucet_net_keys: list[str],
+) -> dict:
     web_env = {
         "DOCKER_HOST": "tcp://socket-proxy:2375",
         "CONFIG_PATH": "/app/config.yaml",
@@ -56,69 +60,126 @@ def _compose(onion_hostname: str | None, lnd_net_keys: list[str]) -> dict:
     if onion_hostname:
         web_env["ONION_HOSTNAME"] = onion_hostname
 
-    # The dashboard joins each enabled network's compose network (declared
-    # external) so it can mint LNURL invoices on that network's primary LND node,
-    # reaching it by its unique container name (argus-<net>-lnd) over REST. The
-    # `argus` service alias is NOT usable here: every per-net LND shares it, so it
-    # would collide across the networks the dashboard joins. The networks own
-    # their own auth (the invoice macaroon is read separately); joining them only
-    # grants L3 reachability. Aliased locally as `net-<key>` -> argus-<key>-net.
-    web_networks = ["web"]
-    extra_networks: dict[str, dict] = {}
-    for key in lnd_net_keys:
-        alias = f"net-{key}"
-        web_networks.append(alias)
-        extra_networks[alias] = {"name": f"argus-{key}-net", "external": True}
+    # Both the dashboard and the faucet join each relevant network's compose
+    # network (declared external) so they can reach that network's primary LND
+    # node by its unique container name (argus-<net>-lnd) over REST. The `argus`
+    # service alias is NOT usable: every per-net LND shares it, so it would collide
+    # across the networks joined here. Aliased locally as `net-<key>` ->
+    # argus-<key>-net. The dashboard needs the LNURL networks; the faucet needs
+    # the faucet networks; the top-level `networks:` declares their union once.
+    def _net_aliases(keys: list[str]) -> list[str]:
+        return [f"net-{k}" for k in keys]
+
+    all_net_keys = list(dict.fromkeys([*lnd_net_keys, *faucet_net_keys]))
+    extra_networks: dict[str, dict] = {
+        f"net-{k}": {"name": f"argus-{k}-net", "external": True}
+        for k in all_net_keys
+    }
+
+    services: dict[str, dict] = {
+        # Read-only Docker API proxy: the only thing that touches the socket.
+        # Exposes just the GET endpoints the dashboard reads; POST stays off.
+        "socket-proxy": {
+            "image": "${SOCKET_PROXY_IMAGE}",
+            "container_name": "argus-web-socket-proxy",
+            "restart": "unless-stopped",
+            "environment": {
+                # GET-only surface the dashboard needs. VERSION lets the
+                # Docker SDK auto-negotiate the API version on connect.
+                "VERSION": "1",
+                "CONTAINERS": "1",
+                "VOLUMES": "1",
+                "IMAGES": "1",
+                "INFO": "1",
+                "SYSTEM": "1",
+                "NETWORKS": "1",
+                "PING": "1",
+                "POST": "0",
+            },
+            "volumes": ["/var/run/docker.sock:/var/run/docker.sock:ro"],
+            "networks": ["web"],
+        },
+        "web": {
+            "build": {
+                "context": ".",
+                "dockerfile": "Dockerfile",
+                "args": {"PYTHON_IMAGE": "${WEB_PYTHON_IMAGE}"},
+            },
+            "image": "argus-web:local",
+            "container_name": "argus-web",
+            "restart": "unless-stopped",
+            "depends_on": ["socket-proxy"],
+            "environment": web_env,
+            "volumes": [
+                "web_cache:/data",
+                # Host root (read-only) so disk totals reflect the real machine.
+                "/:/host:ro",
+                # Config is mounted (not baked) so edits don't need a rebuild.
+                "./config.yaml:/app/config.yaml:ro",
+            ],
+            # Closed to the internet; the shared Caddy fronts it.
+            "ports": [f"127.0.0.1:{WEB_BACKEND_PORT}:{_GUNICORN_PORT}"],
+            "networks": ["web", *_net_aliases(lnd_net_keys)],
+        },
+    }
+
+    volumes: dict[str, dict] = {"web_cache": {}}
+
+    # The faucet: a SECOND service from the same image (so a faucet bug runs in a
+    # separate process and can't crash the dashboard). It reads each faucet
+    # network's admin.macaroon + tls.cert from that network's LND data volume,
+    # mounted read-only — the one place this install holds a fund-moving
+    # credential, kept off the dashboard. It joins the faucet networks for
+    # reachability and the `web` network to read donation info via the socket
+    # proxy. Only generated when at least one network has a faucet.
+    if faucet_net_keys:
+        faucet_env = {
+            "CONFIG_PATH": "/app/config.yaml",
+            "FAUCET_DB": "/faucet/faucet.db",
+            "LND_DIR_ROOT": "/lnd",
+            # For reading the public donation address via the read-only proxy.
+            "DOCKER_HOST": "tcp://socket-proxy:2375",
+        }
+        if onion_hostname:
+            faucet_env["ONION_HOSTNAME"] = onion_hostname
+
+        faucet_volumes = [
+            "faucet_data:/faucet",
+            "./config.yaml:/app/config.yaml:ro",
+        ]
+        for k in faucet_net_keys:
+            # The per-network LND data volume (external — created by that
+            # network's stack), read-only: holds admin.macaroon + tls.cert.
+            vol = f"argus-{k}_lnd_data"
+            faucet_volumes.append(f"{vol}:/lnd/{k}:ro")
+            volumes[vol] = {"name": vol, "external": True}
+
+        services["faucet"] = {
+            "image": "argus-web:local",
+            "container_name": "argus-faucet",
+            "restart": "unless-stopped",
+            "depends_on": ["web", "socket-proxy"],
+            "command": [
+                "gunicorn",
+                "-b",
+                f"0.0.0.0:{_GUNICORN_PORT}",
+                "-w",
+                "2",
+                "--timeout",
+                "120",
+                "argus.faucet.wsgi:app",
+            ],
+            "environment": faucet_env,
+            "volumes": faucet_volumes,
+            "ports": [f"127.0.0.1:{FAUCET_BACKEND_PORT}:{_GUNICORN_PORT}"],
+            "networks": ["web", *_net_aliases(faucet_net_keys)],
+        }
+        volumes["faucet_data"] = {}
 
     return {
         "name": "argus-web",
-        "services": {
-            # Read-only Docker API proxy: the only thing that touches the socket.
-            # Exposes just the GET endpoints the dashboard reads; POST stays off.
-            "socket-proxy": {
-                "image": "${SOCKET_PROXY_IMAGE}",
-                "container_name": "argus-web-socket-proxy",
-                "restart": "unless-stopped",
-                "environment": {
-                    # GET-only surface the dashboard needs. VERSION lets the
-                    # Docker SDK auto-negotiate the API version on connect.
-                    "VERSION": "1",
-                    "CONTAINERS": "1",
-                    "VOLUMES": "1",
-                    "IMAGES": "1",
-                    "INFO": "1",
-                    "SYSTEM": "1",
-                    "NETWORKS": "1",
-                    "PING": "1",
-                    "POST": "0",
-                },
-                "volumes": ["/var/run/docker.sock:/var/run/docker.sock:ro"],
-                "networks": ["web"],
-            },
-            "web": {
-                "build": {
-                    "context": ".",
-                    "dockerfile": "Dockerfile",
-                    "args": {"PYTHON_IMAGE": "${WEB_PYTHON_IMAGE}"},
-                },
-                "image": "argus-web:local",
-                "container_name": "argus-web",
-                "restart": "unless-stopped",
-                "depends_on": ["socket-proxy"],
-                "environment": web_env,
-                "volumes": [
-                    "web_cache:/data",
-                    # Host root (read-only) so disk totals reflect the real machine.
-                    "/:/host:ro",
-                    # Config is mounted (not baked) so edits don't need a rebuild.
-                    "./config.yaml:/app/config.yaml:ro",
-                ],
-                # Closed to the internet; the shared Caddy fronts it.
-                "ports": [f"127.0.0.1:{WEB_BACKEND_PORT}:{_GUNICORN_PORT}"],
-                "networks": web_networks,
-            },
-        },
-        "volumes": {"web_cache": {}},
+        "services": services,
+        "volumes": volumes,
         "networks": {"web": {"name": "argus-web-net"}, **extra_networks},
     }
 
@@ -154,7 +215,10 @@ def generate_web(
     lnd_net_keys = (
         [k for k, _ in cfg.enabled_networks()] if cfg.web.lnurl.enabled else []
     )
-    compose = _compose(onion_hostname, lnd_net_keys)
+    # The faucet is a separate service joining each faucet-enabled network (for
+    # LND reachability + its read-only data volume).
+    faucet_net_keys = [k for k, _ in cfg.faucet_networks()]
+    compose = _compose(onion_hostname, lnd_net_keys, faucet_net_keys)
     rotation, log_block = global_log(cfg)
     if rotation:
         for svc in compose["services"].values():

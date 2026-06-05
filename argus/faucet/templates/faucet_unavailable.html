@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Faucet unavailable — Bitcoin Argus{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>Faucet unavailable</h1>
+  <p class="tagline">
+    There is no faucet for <code>{{ net_key }}</code> on this installation — the
+    network may be disabled, or its faucet turned off. Head back to the
+    <a href="/">main page</a> to see what's available.
+  </p>
+</section>
+{% endblock %}

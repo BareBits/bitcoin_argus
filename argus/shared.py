@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 
 from .config import ArgusConfig
-from .constants import NETWORK_SPECS, WEB_BACKEND_PORT
+from .constants import FAUCET_BACKEND_PORT, NETWORK_SPECS, WEB_BACKEND_PORT
 from .resources import global_log
 
 
@@ -128,14 +128,27 @@ def render_caddyfile(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> s
             "",
         ]
 
-    # The dashboard: the site root, fronting the gunicorn loopback port.
+    # The dashboard: the site root, fronting the gunicorn loopback port. When any
+    # network has a faucet, the faucet runs as a separate backend, so this site
+    # path-routes `/<net>/faucet` to it and everything else to the dashboard
+    # (ordered `handle` blocks: first match wins).
     if cfg.web.enabled:
-        lines += [
-            f"{_web_site_address(cfg)} {{",
-            f"    reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}",
-            "}",
-            "",
-        ]
+        faucet_keys = [k for k, _ in cfg.faucet_networks()]
+        lines.append(f"{_web_site_address(cfg)} {{")
+        if faucet_keys:
+            paths = " ".join(f"/{k}/faucet /{k}/faucet/*" for k in faucet_keys)
+            lines += [
+                f"    @faucet path {paths}",
+                "    handle @faucet {",
+                f"        reverse_proxy 127.0.0.1:{FAUCET_BACKEND_PORT}",
+                "    }",
+                "    handle {",
+                f"        reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}",
+                "    }",
+            ]
+        else:
+            lines.append(f"    reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}")
+        lines += ["}", ""]
 
     return "\n".join(lines).rstrip() + "\n"
 

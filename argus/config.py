@@ -136,6 +136,9 @@ class GlobalConfig(_Base):
     # it drives `docker compose down -v/up -d` on the mined networks via the
     # mounted Docker socket). Only used when a network has reset enabled.
     reset_controller_image: str = "docker:27-cli"
+    # Default faucet approval function for networks that don't pin their own
+    # (see argus.faucet.approval). Must name a registered function.
+    faucet_default_approval: str = "max_one_btc"
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
     tor: TorCfg = Field(default_factory=TorCfg)
 
@@ -144,6 +147,18 @@ class GlobalConfig(_Base):
     def _check_hostname(cls, v: str) -> str:
         if not _is_valid_host(v):
             raise ValueError(f"invalid hostname or IP: {v!r}")
+        return v
+
+    @field_validator("faucet_default_approval")
+    @classmethod
+    def _check_faucet_default(cls, v: str) -> str:
+        from .faucet.approval import is_registered, names
+
+        if not is_registered(v):
+            raise ValueError(
+                f"global.faucet_default_approval {v!r} is not a known function "
+                f"(known: {names()})"
+            )
         return v
 
 
@@ -356,6 +371,42 @@ class ResetCfg(_Base):
     check_interval_seconds: int = Field(default=DEFAULT_RESET_CHECK_INTERVAL, ge=1)
 
 
+class FaucetCfg(_Base):
+    """Per-network faucet: dispenses on-chain testnet coins from LND node #1.
+
+    Runs as a separate, isolated container from the dashboard (so a faucet bug
+    can't take the main page down) and is reachable at ``/<net>/faucet`` on the
+    site root. A single named approval function (see
+    :mod:`argus.faucet.approval`) decides whether to dispense; ``None`` falls back
+    to ``global.faucet_default_approval``. If the network is reset, the faucet's
+    recorded payouts for it are wiped too (the per-network ``reset.sh`` calls
+    ``argus.faucet.reset``).
+    """
+
+    enabled: bool = True
+    # Name of the approval function. None => global.faucet_default_approval.
+    approval_function: str | None = None
+    # Fee rate for dispensing transactions (sat/vByte). Testnet fees are trivial.
+    fee_sat_per_vbyte: int = Field(default=2, ge=1)
+    # How many recent payouts to list on the faucet page.
+    recent_limit: int = Field(default=50, ge=1, le=1000)
+
+    @field_validator("approval_function")
+    @classmethod
+    def _check_approval(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        # Imported lazily to keep the faucet out of the config import cycle.
+        from .faucet.approval import is_registered, names
+
+        if not is_registered(v):
+            raise ValueError(
+                f"faucet.approval_function {v!r} is not a known function "
+                f"(known: {names()})"
+            )
+        return v
+
+
 class NetworkCfg(_Base):
     enabled: bool = False
     prune: int = Field(default=0, ge=0)  # MiB; 0 = no pruning
@@ -370,6 +421,7 @@ class NetworkCfg(_Base):
     mempool: MempoolCfg = Field(default_factory=MempoolCfg)
     miner: MinerCfg = Field(default_factory=MinerCfg)
     reset: ResetCfg = Field(default_factory=ResetCfg)
+    faucet: FaucetCfg = Field(default_factory=FaucetCfg)
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
 
     # Optional host-port overrides keyed by the names in constants.PORT_OFFSETS
@@ -582,6 +634,18 @@ class ArgusConfig(_Base):
             for k in NETWORK_ORDER
             if k in self.networks and self.networks[k].enabled
         ]
+
+    def faucet_networks(self) -> list[tuple[str, NetworkCfg]]:
+        """(key, cfg) pairs for enabled networks whose faucet is on, in order."""
+        return [(k, n) for k, n in self.enabled_networks() if n.faucet.enabled]
+
+    def faucet_approval_name(self, net_key: str) -> str:
+        """The approval-function name a network's faucet uses (its own, else the
+        global default)."""
+        return (
+            self.networks[net_key].faucet.approval_function
+            or self.global_.faucet_default_approval
+        )
 
     # -- semantic validation (cross-field) -----------------------------------
 
