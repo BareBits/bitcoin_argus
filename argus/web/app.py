@@ -8,12 +8,14 @@ from flask import Flask, g, jsonify, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ..config import ArgusConfig, load_config
+from ..constants import NETWORK_ORDER
 from ..ports import allocate
-from . import cache, metrics
+from . import cache, history, metrics
 from .content import (
     ATTACH_DEFAULT_OS,
     ATTACH_OS_LABELS,
     ATTACH_OS_ORDER,
+    VARIANTS,
     when_to_use_columns,
 )
 from .inventory import build_donations, build_sections
@@ -50,6 +52,32 @@ def _human_bytes(value) -> str:
     return f"{num:.1f} PB"
 
 
+def _human_cores(value) -> str:
+    """Render CPU usage in *cores* (e.g. 0.42), or 'n/a'."""
+    if value is None:
+        return "n/a"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if num < 0.005:
+        return "~0"
+    return f"{num:.2f}"
+
+
+# Accepted look-back windows for the /stats graphs: label -> seconds. Bounded by
+# the retention tiers (raw 24h, hourly 3d, daily 365d).
+_RANGES: dict[str, int] = {
+    "1h": 3600,
+    "6h": 6 * 3600,
+    "24h": 86400,
+    "3d": 3 * 86400,
+    "30d": 30 * 86400,
+    "365d": 365 * 86400,
+}
+_DEFAULT_RANGE = "24h"
+
+
 def create_app(config_path: str | None = None, cache_db: str | None = None) -> Flask:
     app = Flask(__name__)
     # Honour the shared Caddy's X-Forwarded-Proto/Host so externally-built URLs
@@ -64,6 +92,7 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
     lnurl = LnurlService(cfg)
 
     app.jinja_env.filters["humanbytes"] = _human_bytes
+    app.jinja_env.filters["humancores"] = _human_cores
 
     def _resolve_theme() -> str:
         themes = cfg.web.themes
@@ -106,6 +135,7 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
             "warning_html": WARNING_HTML,
             "repo_url": cfg.web.repo_url,
             "onion_hostname": _ONION_HOSTNAME,
+            "metrics_history_enabled": cfg.web.metrics_history.enabled,
         }
 
     net_keys = [k for k, _ in cfg.enabled_networks()]
@@ -140,6 +170,47 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
             metrics_errors=payload.get("errors", []),
             cache_age=int(age),
         )
+
+    # ------------------------------------------------------------------
+    # Resource history: the /stats graphs page + the JSON it fetches. Both are
+    # no-ops (the page explains, the API returns an empty payload) when history
+    # collection is disabled, so links never dead-end.
+    # ------------------------------------------------------------------
+    _net_titles = {
+        k: (VARIANTS[k].title if k in VARIANTS else k)
+        for k in NETWORK_ORDER
+        if k in cfg.networks
+    }
+
+    @app.route("/stats")
+    def stats():
+        return render_template(
+            "stats.html",
+            history_enabled=cfg.web.metrics_history.enabled,
+            net_titles=_net_titles,
+            ranges=list(_RANGES.keys()),
+            default_range=_DEFAULT_RANGE,
+            host_key=history.HOST_KEY,
+        )
+
+    @app.route("/api/metrics/history")
+    def metrics_history_api():
+        if not cfg.web.metrics_history.enabled:
+            return jsonify(enabled=False, series={}), 200
+        rng = request.args.get("range", _DEFAULT_RANGE)
+        range_seconds = _RANGES.get(rng)
+        if range_seconds is None:
+            return jsonify(status="ERROR", reason="invalid range"), 400
+        try:
+            payload = history.load_series(
+                range_seconds,
+                cfg.web.metrics_history.raw_retention_hours,
+            )
+        except Exception as exc:  # pragma: no cover - environment dependent
+            return jsonify(enabled=True, series={}, error=str(exc)), 200
+        payload["enabled"] = True
+        payload["range"] = rng
+        return jsonify(payload)
 
     @app.route("/tos")
     def tos():

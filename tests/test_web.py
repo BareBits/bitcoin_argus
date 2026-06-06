@@ -160,37 +160,79 @@ def test_collect_with_fake_docker(monkeypatch):
     assert "host" in result
 
 
-def test_container_ram_samples_parallel_skips_and_aggregates():
-    """The parallel RAM collector returns one sample per attributable container,
-    skipping containers that aren't ours and those whose stats() call fails."""
+def _fake_stats(mem, *, cpu=None, net=None):
+    """Build a minimal stats(stream=False) payload like the daemon returns."""
+    s = {"memory_stats": {"usage": mem, "stats": {"inactive_file": 0}}}
+    if cpu is not None:
+        cur, prev, sys_cur, sys_prev, online = cpu
+        s["cpu_stats"] = {
+            "cpu_usage": {"total_usage": cur},
+            "system_cpu_usage": sys_cur,
+            "online_cpus": online,
+        }
+        s["precpu_stats"] = {
+            "cpu_usage": {"total_usage": prev},
+            "system_cpu_usage": sys_prev,
+        }
+    if net is not None:
+        s["networks"] = {"eth0": {"rx_bytes": net[0], "tx_bytes": net[1]}}
+    return s
+
+
+def test_per_container_samples_parallel_skips_and_aggregates():
+    """per_container_samples returns one ContainerSample per attributable
+    container, carrying RAM/CPU/net, skipping non-ours + stats() failures."""
 
     class C:
-        def __init__(self, name, mem=None, fail=False):
+        def __init__(self, name, mem=None, fail=False, cpu=None, net=None):
             self.name, self._mem, self._fail = name, mem, fail
+            self._cpu, self._net = cpu, net
 
         def stats(self, stream=False):
             if self._fail:
                 raise RuntimeError("daemon hiccup")
-            return {"memory_stats": {"usage": self._mem, "stats": {"inactive_file": 0}}}
+            return _fake_stats(self._mem, cpu=self._cpu, net=self._net)
 
     containers = [
-        C("argus-custom-signet-short-bitcoind", 100),
+        # 25% of 4 cores busy -> 1.0 core; 1_000_000 rx / 2_000 tx.
+        C(
+            "argus-custom-signet-short-bitcoind",
+            100,
+            cpu=(250, 0, 1000, 0, 4),
+            net=(1_000_000, 2_000),
+        ),
         C("argus-custom-signet-long-bitcoind", 200),
         C("argus-regtest-fulcrum-1", 50),
         C("not-ours", 999),  # skipped: not classified
         C("argus-regtest-mempool-db", fail=True),  # skipped: stats() raised
     ]
-    samples = metrics._container_ram_samples(None, containers)
-    by_key = {(net, bucket): ram for net, bucket, ram in samples}
-    assert by_key == {
-        ("custom-signet-short", "bitcoind"): 100,
-        ("custom-signet-long", "bitcoind"): 200,
-        ("regtest", "fulcrum"): 50,
+    samples = metrics.per_container_samples(None, containers)
+    by_key = {(s.net, s.bucket): s for s in samples}
+    assert set(by_key) == {
+        ("custom-signet-short", "bitcoind"),
+        ("custom-signet-long", "bitcoind"),
+        ("regtest", "fulcrum"),
     }
+    bc = by_key[("custom-signet-short", "bitcoind")]
+    assert bc.ram == 100
+    assert bc.cpu == pytest.approx(1.0)
+    assert (bc.rx, bc.tx, bc.has_net) == (1_000_000, 2_000, True)
+    # No cpu/net payload -> zeroed, host-net flag false.
+    other = by_key[("custom-signet-long", "bitcoind")]
+    assert other.cpu == 0.0 and other.has_net is False
 
 
-def test_container_ram_samples_empty():
-    assert metrics._container_ram_samples(None, []) == []
+def test_per_container_samples_empty():
+    assert metrics.per_container_samples(None, []) == []
+
+
+def test_cpu_and_net_helpers_edge_cases():
+    # Incomplete CPU payload (just-started container) -> 0.0, never negative.
+    assert metrics._container_cpu_cores({}) == 0.0
+    assert metrics._container_cpu_cores(_fake_stats(0, cpu=(0, 0, 0, 0, 1))) == 0.0
+    # Host-networked container: no "networks" key -> has_net False.
+    assert metrics._container_net_bytes({}) == (0, 0, False)
+    assert metrics._container_net_bytes(_fake_stats(0, net=(5, 7))) == (5, 7, True)
 
 
 # --- cache TTL --------------------------------------------------------------
@@ -791,12 +833,46 @@ def test_generate_web_artifacts(tmp_path):
     # The source is copied in so the image build context is self-contained.
     assert (web_dir / "argus" / "web" / "app.py").is_file()
     compose = yaml.safe_load((web_dir / "docker-compose.yml").read_text())
-    # The faucet runs as a separate service in the same project (on by default).
-    assert set(compose["services"]) == {"web", "socket-proxy", "faucet"}
+    # The faucet + metrics-sampler each run as a separate service in the same
+    # project (both on by default).
+    assert set(compose["services"]) == {
+        "web",
+        "socket-proxy",
+        "faucet",
+        "metrics-sampler",
+    }
     # socket-proxy is read-only on the docker socket.
     assert "/var/run/docker.sock:/var/run/docker.sock:ro" in (
         compose["services"]["socket-proxy"]["volumes"]
     )
+    # The sampler runs the loop module, talks only to the read-only proxy, and
+    # shares the history volume the dashboard reads (read-only on the web side).
+    sampler = compose["services"]["metrics-sampler"]
+    assert sampler["command"] == ["python", "-m", "argus.web.sampler"]
+    assert sampler["environment"]["DOCKER_HOST"] == "tcp://socket-proxy:2375"
+    assert "metrics_data:/history" in sampler["volumes"]
+    assert "metrics_data:/history:ro" in compose["services"]["web"]["volumes"]
+    assert compose["services"]["web"]["environment"]["HISTORY_DB"] == (
+        "/history/metrics.db"
+    )
+    assert "metrics_data" in compose["volumes"]
+
+
+def test_generate_web_metrics_history_disabled_drops_sampler(tmp_path):
+    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
+    data["web"] = {"metrics_history": {"enabled": False}}
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml.safe_dump(data))
+    cfg = load_config(p)
+    web_dir = generate_web(cfg, tmp_path / "g", p)
+    compose = yaml.safe_load((web_dir / "docker-compose.yml").read_text())
+    assert "metrics-sampler" not in compose["services"]
+    assert "metrics_data" not in compose.get("volumes", {})
+    # The web service no longer mounts the (now absent) history volume.
+    assert all(
+        "metrics_data" not in v for v in compose["services"]["web"]["volumes"]
+    )
+    assert "HISTORY_DB" not in compose["services"]["web"]["environment"]
 
 
 def test_generate_web_disabled_returns_none(tmp_path):

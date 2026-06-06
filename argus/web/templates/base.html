@@ -37,6 +37,12 @@
 <body class="theme-{{ current_theme }}">
   <header class="topbar">
     <a class="brand" href="/">▚ Bitcoin&nbsp;Argus</a>
+    {% if metrics_history_enabled %}
+    <nav class="site-nav" aria-label="Site sections">
+      <a href="/">dashboard</a>
+      <a href="/stats">graphs</a>
+    </nav>
+    {% endif %}
     <nav class="theme-selector" aria-label="Theme selector">
       <span class="theme-label">theme:</span>
       {% for t in theme_links %}
@@ -92,5 +98,6 @@
       }
     });
   </script>
+  {% block scripts_extra %}{% endblock %}
 </body>
 </html>

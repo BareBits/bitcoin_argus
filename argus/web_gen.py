@@ -51,14 +51,19 @@ def _compose(
     onion_hostname: str | None,
     lnd_net_keys: list[str],
     faucet_net_keys: list[str],
+    metrics_history=None,
     faucet_ip_salt: str | None = None,
 ) -> dict:
+    history_on = bool(metrics_history and metrics_history.enabled)
     web_env = {
         "DOCKER_HOST": "tcp://socket-proxy:2375",
         "CONFIG_PATH": "/app/config.yaml",
         "CACHE_DB": "/data/cache.db",
         "HOST_ROOT": "/host",
     }
+    if history_on:
+        # The dashboard reads the time-series store the sampler writes (read-only).
+        web_env["HISTORY_DB"] = "/history/metrics.db"
     # The dashboard shows the installation's onion address (and the per-service
     # onion connection lines) when Tor is enabled. Passed by env so a config edit
     # doesn't require a rebuild; absent => the Tor UI is simply omitted.
@@ -129,6 +134,40 @@ def _compose(
     }
 
     volumes: dict[str, dict] = {"web_cache": {}}
+
+    # The metrics-history sampler: a THIRD service from the same image (so a
+    # sampler bug runs in its own process and can't crash the dashboard, like the
+    # faucet). It records per-bucket CPU/RAM/disk/net over time into a shared
+    # SQLite volume the dashboard reads read-only. Only generated when enabled.
+    if history_on:
+        mh = metrics_history
+        services["web"]["volumes"].append("metrics_data:/history:ro")
+        services["metrics-sampler"] = {
+            "image": "argus-web:local",
+            "container_name": "argus-metrics-sampler",
+            "restart": "unless-stopped",
+            "depends_on": ["socket-proxy"],
+            "command": ["python", "-m", "argus.web.sampler"],
+            "environment": {
+                "DOCKER_HOST": "tcp://socket-proxy:2375",
+                "HISTORY_DB": "/history/metrics.db",
+                "HOST_ROOT": "/host",
+                "SAMPLE_INTERVAL_SECONDS": str(mh.sample_interval_seconds),
+                "DISK_SAMPLE_INTERVAL_SECONDS": str(
+                    mh.disk_sample_interval_seconds
+                ),
+                "RAW_RETENTION_HOURS": str(mh.raw_retention_hours),
+                "HOURLY_RETENTION_DAYS": str(mh.hourly_retention_days),
+                "DAILY_RETENTION_DAYS": str(mh.daily_retention_days),
+            },
+            "volumes": [
+                "metrics_data:/history",
+                # Host root (read-only) for whole-host CPU/mem/disk/net totals.
+                "/:/host:ro",
+            ],
+            "networks": ["web"],
+        }
+        volumes["metrics_data"] = {}
 
     # The faucet: a SECOND service from the same image (so a faucet bug runs in a
     # separate process and can't crash the dashboard). It reads each faucet
@@ -229,7 +268,11 @@ def generate_web(
     # LND reachability + its read-only data volume).
     faucet_net_keys = [k for k, _ in cfg.faucet_networks()]
     compose = _compose(
-        onion_hostname, lnd_net_keys, faucet_net_keys, faucet_ip_salt
+        onion_hostname,
+        lnd_net_keys,
+        faucet_net_keys,
+        cfg.web.metrics_history,
+        faucet_ip_salt,
     )
     rotation, log_block = global_log(cfg)
     if rotation:

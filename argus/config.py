@@ -1020,6 +1020,61 @@ class WebLnurlCfg(_Base):
         return self
 
 
+class WebMetricsHistoryCfg(_Base):
+    """Time-series history for the per-service resource graphs (``/stats``).
+
+    When enabled, a small ``metrics-sampler`` sidecar (a sibling of the dashboard
+    from the same image) records each service-bucket's CPU/RAM/disk/network every
+    ``sample_interval_seconds`` into a SQLite store, retained in three tiers:
+    raw samples for ``raw_retention_hours``, hourly rollups for
+    ``hourly_retention_days``, daily rollups for ``daily_retention_days``. Disk is
+    sampled on a slower ``disk_sample_interval_seconds`` cadence because reading it
+    forces the Docker daemon to size every volume. Disable to drop the sidecar
+    entirely (the live snapshot table is unaffected)."""
+
+    enabled: bool = True
+    sample_interval_seconds: int = 60
+    disk_sample_interval_seconds: int = 900
+    raw_retention_hours: int = 24
+    hourly_retention_days: int = 3
+    daily_retention_days: int = 365
+
+    @field_validator(
+        "sample_interval_seconds",
+        "disk_sample_interval_seconds",
+        "raw_retention_hours",
+        "hourly_retention_days",
+        "daily_retention_days",
+    )
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("web.metrics_history intervals/retention must be >= 1")
+        return v
+
+    @field_validator("sample_interval_seconds")
+    @classmethod
+    def _sane_interval(cls, v: int) -> int:
+        # A floor keeps the sampler from hammering the docker socket; an hour
+        # ceiling keeps sub-hourly graphs meaningful (the finest tier is per-sample).
+        if not (5 <= v <= 3600):
+            raise ValueError(
+                "web.metrics_history.sample_interval_seconds must be in 5..3600"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _check_disk_cadence(self) -> "WebMetricsHistoryCfg":
+        # Disk needn't be sampled more often than the base interval (and usually
+        # much less, since /system/df is expensive).
+        if self.disk_sample_interval_seconds < self.sample_interval_seconds:
+            raise ValueError(
+                "web.metrics_history.disk_sample_interval_seconds must be >= "
+                "sample_interval_seconds"
+            )
+        return self
+
+
 class WebCfg(_Base):
     """The Argus dashboard: a host-global web server fronted by the shared Caddy.
 
@@ -1052,6 +1107,10 @@ class WebCfg(_Base):
     contact_email: str = "sales@getbarebits.com"
     # LNURL-pay / Lightning Address support (fees@/cashout@/donate@/referral@).
     lnurl: WebLnurlCfg = Field(default_factory=WebLnurlCfg)
+    # Time-series resource history + the /stats graphs (sampler sidecar).
+    metrics_history: WebMetricsHistoryCfg = Field(
+        default_factory=WebMetricsHistoryCfg
+    )
 
     @field_validator("port")
     @classmethod

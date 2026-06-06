@@ -55,7 +55,12 @@ class ServiceRow:
     ports: list[PortRef] = field(default_factory=list)
     links: list[LinkRef] = field(default_factory=list)
     ram: int | None = None
+    cpu: float | None = None
     disk: int | None = None
+    # Cumulative network bytes since the container last started (point-in-time, for
+    # the live table; the /stats graphs derive speed + totals from interval deltas).
+    net_rx: int | None = None
+    net_tx: int | None = None
     # The deployed version of this sub-tool (a docker image tag, a git ref, or the
     # Argus version for our own components) and the GitHub repo it links to. Both
     # None => no version cell (shown as "—").
@@ -142,7 +147,10 @@ class NetworkSection:
     # Visitor "attach your tools" recipes, grouped by tool with per-OS commands.
     attach_tools: list[AttachTool] = field(default_factory=list)
     ram_total: int = 0
+    cpu_total: float = 0.0
     disk_total: int = 0
+    net_rx_total: int = 0
+    net_tx_total: int = 0
     reset: ResetInfo | None = None
     # Per-node liquidity rows for the operator "add liquidity" panel (empty until
     # the nodes report a snapshot) + network totals (pre-formatted BTC strings).
@@ -227,11 +235,10 @@ def _liquidity_nodes(
     return nodes, tot_out, tot_in
 
 
-def _usage(metrics: dict, net_key: str, bucket: str) -> tuple[int | None, int | None]:
-    entry = (metrics.get("usage") or {}).get(net_key, {}).get(bucket)
-    if not entry:
-        return None, None
-    return entry.get("ram"), entry.get("disk")
+def _usage(metrics: dict, net_key: str, bucket: str) -> dict | None:
+    """The live usage dict ``{"ram","cpu","disk","net_rx","net_tx"}`` for a bucket,
+    or None when nothing has been recorded for it yet."""
+    return (metrics.get("usage") or {}).get(net_key, {}).get(bucket) or None
 
 
 def _service_rows(
@@ -249,8 +256,19 @@ def _service_rows(
     rows: list[ServiceRow] = []
 
     def row(name: str, bucket: str, **kw) -> ServiceRow:
-        ram, disk = _usage(metrics, net_key, bucket)
-        return ServiceRow(name=name, bucket=bucket, ram=ram, disk=disk, **kw)
+        u = _usage(metrics, net_key, bucket)
+        if not u:
+            return ServiceRow(name=name, bucket=bucket, **kw)
+        return ServiceRow(
+            name=name,
+            bucket=bucket,
+            ram=u.get("ram"),
+            cpu=u.get("cpu"),
+            disk=u.get("disk"),
+            net_rx=u.get("net_rx"),
+            net_tx=u.get("net_tx"),
+            **kw,
+        )
 
     def link(label: str, ssl: bool, port: int, path: str = "") -> LinkRef:
         """A service link plus its onion equivalent (same port, routed by Tor).
@@ -666,7 +684,10 @@ def build_sections(
                 onion_faucet,
             )
             section.ram_total = sum(s.ram or 0 for s in section.services)
+            section.cpu_total = sum(s.cpu or 0.0 for s in section.services)
             section.disk_total = sum(s.disk or 0 for s in section.services)
+            section.net_rx_total = sum(s.net_rx or 0 for s in section.services)
+            section.net_tx_total = sum(s.net_tx or 0 for s in section.services)
             # Operator recipes (Bitcoin Core RPC). Visitor recipes are grouped,
             # per-OS, in section.attach_tools below.
             section.attach = attach_commands(net_key, ports)
