@@ -14,7 +14,7 @@ from urllib.parse import quote
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
 from ..reset import format_reset_eta, seconds_until_reset
-from ..tor import onion_routes
+from ..tor import onion_routes, onion_web_path_routed
 from .content import (
     MEMPOOL_SPACE_LN_NODE,
     VARIANT_ORDER,
@@ -131,6 +131,7 @@ def _service_rows(
     metrics: dict,
     onion_hostname: str | None = None,
     onion_ports: frozenset[int] = frozenset(),
+    onion_faucet: bool = False,
 ) -> list[ServiceRow]:
     net = cfg.networks[net_key]
     spec = NETWORK_SPECS[net_key]
@@ -209,15 +210,20 @@ def _service_rows(
         )
 
     # The faucet (a separate container, path-routed at /<net>/faucet on the site
-    # root). The link is same-origin, so it carries no port and no onion variant
-    # (the onion bypasses Caddy's path routing — see argus/tor.py). Usage shows
-    # n/a: the faucet container (argus-faucet) isn't attributed to any one network.
+    # root). The clearnet link is same-origin (no port). Over Tor it lives on the
+    # onion's port 80 (the dashboard's port) since the onion routes that port
+    # through Caddy's path routing — see argus/tor.py — so the onion variant is the
+    # bare onion host with the same path. Usage shows n/a: the faucet container
+    # (argus-faucet) isn't attributed to any one network.
     if net.faucet.enabled:
+        faucet_onion = (
+            f"http://{onion_hostname}/{net_key}/faucet" if onion_faucet else None
+        )
         rows.append(
             row(
                 "Faucet and lightning functions",
                 "faucet",
-                links=[LinkRef("Open faucet", f"/{net_key}/faucet")],
+                links=[LinkRef("Open faucet", f"/{net_key}/faucet", faucet_onion)],
             )
         )
 
@@ -390,6 +396,9 @@ def build_sections(
     if onion_hostname:
         for r in onion_routes(cfg, port_map):
             onion_by_net.setdefault(r.net_key, []).append(r)
+    # The faucet rides the onion's port-80 path routing (Caddy), not its own onion
+    # port, so it has an onion link exactly when that path routing is active.
+    onion_faucet = onion_hostname is not None and onion_web_path_routed(cfg)
 
     sections: list[NetworkSection] = []
     for net_key in VARIANT_ORDER:
@@ -411,7 +420,8 @@ def build_sections(
                 r.virtual_port for r in onion_by_net.get(net_key, [])
             )
             section.services = _service_rows(
-                cfg, net_key, ports, metrics, onion_hostname, onion_ports
+                cfg, net_key, ports, metrics, onion_hostname, onion_ports,
+                onion_faucet,
             )
             section.ram_total = sum(s.ram or 0 for s in section.services)
             section.disk_total = sum(s.disk or 0 for s in section.services)

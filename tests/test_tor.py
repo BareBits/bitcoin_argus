@@ -52,6 +52,32 @@ def test_routes_use_clearnet_port_numbers_and_backend_targets(tmp_path):
     assert dash.net_key is None and dash.virtual_port == 80
 
 
+def test_dashboard_onion_port_routes_through_caddy_when_faucet(tmp_path):
+    from argus.constants import ONION_WEB_BACKEND_PORT, WEB_BACKEND_PORT
+    from argus.tor import onion_web_path_routed
+
+    # With a faucet, the onion's port 80 must go through Caddy's path-routing site
+    # (so /<net>/faucet reaches the faucet), i.e. target ONION_WEB_BACKEND_PORT.
+    data = _cfg({"regtest": {"enabled": True, "bitcart": BITCART_OFF,
+                             "faucet": {"enabled": True}}})
+    cfgp = tmp_path / "c.yaml"
+    cfgp.write_text(yaml.safe_dump(data))
+    cfg = load_config(str(cfgp))
+    assert onion_web_path_routed(cfg)
+    dash = {r.service: r for r in onion_routes(cfg, allocate(cfg))}["Dashboard"]
+    assert dash.target_port == ONION_WEB_BACKEND_PORT
+
+    # Without a faucet, it goes straight to the dashboard backend (no path routing).
+    data2 = _cfg({"regtest": {"enabled": True, "bitcart": BITCART_OFF,
+                              "faucet": {"enabled": False}}})
+    cfgp2 = tmp_path / "c2.yaml"
+    cfgp2.write_text(yaml.safe_dump(data2))
+    cfg2 = load_config(str(cfgp2))
+    assert not onion_web_path_routed(cfg2)
+    dash2 = {r.service: r for r in onion_routes(cfg2, allocate(cfg2))}["Dashboard"]
+    assert dash2.target_port == WEB_BACKEND_PORT
+
+
 def test_expose_toggles_drop_categories(tmp_path):
     data = _cfg(
         {"regtest": {"enabled": True, "bitcart": BITCART_OFF}},

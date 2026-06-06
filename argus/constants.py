@@ -128,6 +128,13 @@ WEB_BACKEND_PORT = 29080
 # ``/<net>/faucet`` to it. Adjacent to WEB_BACKEND_PORT, below NETWORK_BLOCK_BASE.
 FAUCET_BACKEND_PORT = 29081
 
+# The onion-facing dashboard+faucet site: the shared Caddy serves a plain-HTTP,
+# path-routed copy of the site root here (loopback) so the Tor onion's port 80 can
+# reach BOTH the dashboard and the faucet (the onion forwards to a single port and
+# can't path-route itself). Only used when Tor exposes the web and a faucet exists;
+# otherwise the onion routes straight to WEB_BACKEND_PORT. See argus/tor.py.
+ONION_WEB_BACKEND_PORT = 29082
+
 # Shared Tor layer. The host-networked tor container exposes its SOCKS proxy here
 # so the per-network LND containers can dial onion peers / advertise their onion.
 # They reach it through TOR_SOCKS_HOST_ALIAS, an /etc/hosts entry pointed at the

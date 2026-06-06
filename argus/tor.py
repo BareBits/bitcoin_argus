@@ -26,7 +26,12 @@ from pathlib import Path
 import yaml
 
 from .config import ArgusConfig
-from .constants import NETWORK_SPECS, TOR_SOCKS_PORT, WEB_BACKEND_PORT
+from .constants import (
+    NETWORK_SPECS,
+    ONION_WEB_BACKEND_PORT,
+    TOR_SOCKS_PORT,
+    WEB_BACKEND_PORT,
+)
 from .onionkey import OnionKey
 from .resources import global_log
 
@@ -35,6 +40,23 @@ DASHBOARD_ONION_PORT = 80
 
 # tor reaches every backend on the host loopback (it runs with host networking).
 _TARGET_HOST = "127.0.0.1"
+
+
+def onion_web_path_routed(cfg: ArgusConfig) -> bool:
+    """Whether the onion serves the dashboard *through* the shared Caddy's
+    path-routing site rather than straight to the dashboard backend.
+
+    True iff Tor exposes the web, the dashboard is enabled, and at least one
+    network has a faucet — the only case where the onion needs path routing (so
+    ``/<net>/faucet`` reaches the faucet backend instead of the dashboard). When
+    True, the Dashboard onion route targets :data:`ONION_WEB_BACKEND_PORT`, the
+    loopback port where :mod:`argus.shared` serves a plain-HTTP, path-routed copy
+    of the site root; otherwise it targets the dashboard backend directly.
+    """
+    tor = cfg.global_.tor
+    return bool(
+        tor.enabled and tor.expose_web and cfg.web.enabled and cfg.faucet_networks()
+    )
 
 
 @dataclass(frozen=True)
@@ -123,8 +145,14 @@ def onion_routes(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[
             ))
 
     if tor.expose_web and cfg.web.enabled:
+        # With a faucet, route the onion's port 80 through the shared Caddy's
+        # path-routing site so ``/<net>/faucet`` reaches the faucet; without one,
+        # go straight to the dashboard backend (the onion can't path-route itself).
+        target = (
+            ONION_WEB_BACKEND_PORT if onion_web_path_routed(cfg) else WEB_BACKEND_PORT
+        )
         routes.append(OnionRoute(
-            None, "Dashboard", DASHBOARD_ONION_PORT, WEB_BACKEND_PORT, "http",
+            None, "Dashboard", DASHBOARD_ONION_PORT, target, "http",
         ))
 
     return routes

@@ -19,8 +19,14 @@ from pathlib import Path
 import yaml
 
 from .config import ArgusConfig
-from .constants import FAUCET_BACKEND_PORT, NETWORK_SPECS, WEB_BACKEND_PORT
+from .constants import (
+    FAUCET_BACKEND_PORT,
+    NETWORK_SPECS,
+    ONION_WEB_BACKEND_PORT,
+    WEB_BACKEND_PORT,
+)
 from .resources import global_log
+from .tor import onion_web_path_routed
 
 
 @dataclass(frozen=True)
@@ -104,6 +110,28 @@ def _web_site_address(cfg: ArgusConfig) -> str:
     return f"{host}:{port}"
 
 
+def _site_root_body(faucet_keys: list[str]) -> list[str]:
+    """The inner directives for the dashboard site root.
+
+    When any network has a faucet, the faucet runs as a separate backend, so the
+    site path-routes ``/<net>/faucet`` to it and everything else to the dashboard
+    (ordered ``handle`` blocks: first match wins). Otherwise it is a plain reverse
+    proxy to the dashboard. Shared by the clearnet site root and the onion-facing
+    site so the two routings can never drift."""
+    if not faucet_keys:
+        return [f"    reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}"]
+    paths = " ".join(f"/{k}/faucet /{k}/faucet/*" for k in faucet_keys)
+    return [
+        f"    @faucet path {paths}",
+        "    handle @faucet {",
+        f"        reverse_proxy 127.0.0.1:{FAUCET_BACKEND_PORT}",
+        "    }",
+        "    handle {",
+        f"        reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}",
+        "    }",
+    ]
+
+
 def render_caddyfile(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> str:
     """Render the Caddyfile. Each service is a site on hostname:public_port."""
     g = cfg.global_
@@ -128,27 +156,28 @@ def render_caddyfile(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> s
             "",
         ]
 
-    # The dashboard: the site root, fronting the gunicorn loopback port. When any
-    # network has a faucet, the faucet runs as a separate backend, so this site
-    # path-routes `/<net>/faucet` to it and everything else to the dashboard
-    # (ordered `handle` blocks: first match wins).
+    # The dashboard: the site root, fronting the gunicorn loopback port (with the
+    # faucet path-routed onto its own backend — see _site_root_body).
     if cfg.web.enabled:
         faucet_keys = [k for k, _ in cfg.faucet_networks()]
         lines.append(f"{_web_site_address(cfg)} {{")
-        if faucet_keys:
-            paths = " ".join(f"/{k}/faucet /{k}/faucet/*" for k in faucet_keys)
-            lines += [
-                f"    @faucet path {paths}",
-                "    handle @faucet {",
-                f"        reverse_proxy 127.0.0.1:{FAUCET_BACKEND_PORT}",
-                "    }",
-                "    handle {",
-                f"        reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}",
-                "    }",
-            ]
-        else:
-            lines.append(f"    reverse_proxy 127.0.0.1:{WEB_BACKEND_PORT}")
+        lines += _site_root_body(faucet_keys)
         lines += ["}", ""]
+
+        # An onion-facing copy of the site root: a plain-HTTP, path-routed site on
+        # a loopback port that the Tor onion's port 80 forwards to, so the faucet
+        # is reachable over Tor (the onion forwards to a single port and can't
+        # path-route itself). Only emitted when Tor exposes the web and a faucet
+        # exists; matches any Host (the request carries the .onion) but binds to
+        # loopback so only tor can reach it. See argus/tor.py.
+        if onion_web_path_routed(cfg):
+            lines += [
+                f":{ONION_WEB_BACKEND_PORT} {{",
+                "    bind 127.0.0.1",
+                *_site_root_body(faucet_keys),
+                "}",
+                "",
+            ]
 
     return "\n".join(lines).rstrip() + "\n"
 
