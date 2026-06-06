@@ -282,6 +282,8 @@ SUBTOOL_REPO: dict[str, str] = {
     "cashu_wallet": "https://github.com/cashubtc/cashu.me",
     "mempool": "https://github.com/mempool/mempool",
     "bitcart": "https://github.com/BareBits/bitcart",
+    "cashupayserver": "https://github.com/BareBits/cashupayserver",
+    "woocommerce": "https://github.com/woocommerce/woocommerce",
     "electrum": "https://github.com/spesmilo/electrum",
     "argus": "https://github.com/BareBits/bitcoin_argus",
 }

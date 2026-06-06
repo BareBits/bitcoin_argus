@@ -20,6 +20,8 @@ that network.
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
+| **CashuPayServer** | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
+| **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
 | **mempool** | Block explorer | HTTP via shared proxy |
 | **miner** (regtest / custom signets) | Produces a (signed, for signet) block every minute | — |
 | **reset controller** (mined nets) | Auto-resets a network when its chain outgrows a cap | none (Docker socket only) |
@@ -92,10 +94,13 @@ python -m argus generate          # render enabled networks into generated/
 python -m argus credentials       # show admin logins (also written to a file)
 
 # 2. Deploy on the server (copy generated/ across, then per network)
-#    The first network's `up` builds the cashu.me wallet image from source
-#    (generated/cashu-wallet/) the first time — a few minutes; later nets reuse it.
+#    The first network's `up` builds the cashu.me wallet + CashuPayServer images
+#    from source (generated/cashu-wallet/, generated/cashupayserver/) the first
+#    time — a few minutes; later networks reuse the cached images. The storefront
+#    (CashuPayServer + WooCommerce) self-provisions via one-shot init containers,
+#    so no host wrapper is needed for it (unlike Bitcart).
 cd generated/shared-tor && docker compose up -d       # Tor FIRST (if enabled) — see note
-cd generated/regtest && docker compose up -d         # the core stack
+cd generated/regtest && docker compose up -d --build  # the core stack (+ storefront)
 bash generated/regtest/bitcart/deploy-bitcart.sh     # Bitcart (if enabled)
 cd generated/shared && docker compose up -d           # the shared Caddy
 cd generated/web && docker compose up -d --build       # the dashboard (builds its image)
@@ -246,6 +251,65 @@ storage-cap resets** (a reset leaves `secrets/` untouched and re-uses the same
 Bitcart containers). The Cashu mint runs as an open mint with no login, so it is
 not listed.
 
+## CashuPayServer & WooCommerce storefront
+
+Each network optionally runs a second, self-contained checkout path — a
+**CashuPayServer** payment gateway plus a **WooCommerce** storefront — both **on
+by default** (set `cashupayserver.enabled` / `woocommerce.enabled` to `false` to
+opt out per network). Unlike Bitcart (a host-installed processor with its own
+Neutrino LND), these are ordinary services in the network's own compose project,
+so they come up with `docker compose up -d` — no host wrapper to run.
+
+**CashuPayServer** (the BareBits Lite fork) is a PHP, BTCPay-Greenfield-compatible
+gateway that settles in **ecash against this network's Cashu mint** — no extra
+Lightning node. It has no published image, so Argus builds it from source into a
+shared image (`generated/cashupayserver/`, pinned by `global.cashupayserver_ref`),
+exactly like the cashu.me wallet. Its browser setup wizard can't be scripted, so a
+generated, idempotent **PHP seed script** (baked into the image, run by a one-shot
+`cashupayserver-init` service) provisions it via the app's own classes: it sets
+the admin password, creates a store wired to the in-network mint (`http://cashu:3338`)
+with **submarine swaps disabled**, and mints a Greenfield **API key for WooCommerce**,
+writing the key + store id to a small pairing volume. Submarine swaps stay off by
+design — a self-contained testnet settles in ecash, not via an on-chain swap
+provider (`cashupayserver.submarine_swaps: true` flips them on).
+
+**WooCommerce** is the official WordPress image plus a small, memory-tuned MariaDB,
+provisioned idempotently by a one-shot `woocommerce-init` (`wordpress:cli`) that:
+installs WordPress + WooCommerce + the **BTCPay-for-WooCommerce** plugin, points
+the plugin at this network's CashuPayServer (reading the API key + store id from
+the pairing volume, then registering the order webhook), sets the store currency to
+**BTC**, **enables guest checkout**, **disables user registration**, imports the
+trading-card products, and strips unused weight (wp-cron, XML-RPC, comments,
+feeds/emoji/embeds, default themes/plugins, the WooCommerce setup wizard and
+marketing/analytics). The provisioning files are written per network into
+`generated/<net>/woocommerce/` and bind-mounted into the init container.
+
+### Demo products (shared with the Bitcart store)
+
+The storefront sells the **same** "folk hero" trading cards as the Bitcart store —
+Hal Finney, Gavin Andresen, Satoshi Nakamoto — reused straight from
+`argus/bitcart_cards/` (same manifest + rendered PNGs). Prices are the cards' sats
+value converted to BTC (the store currency); the cards are marked *virtual* so
+guest checkout needs no shipping details. Import is idempotent (matched by SKU).
+
+### Admin logins
+
+Both admin passwords are **auto-generated** into `secrets/<net>/secrets.env`
+(`CASHUPAYSERVER_ADMIN_PASSWORD`, `WORDPRESS_ADMIN_PASSWORD`) and surfaced the same
+way as Bitcart — `python -m argus credentials` and `generated/CREDENTIALS.txt`:
+
+* **CashuPayServer admin** — username `admin`, at `…:<port+120>/admin.php`.
+* **WooCommerce admin** — username `woocommerce.admin_user` (default `argus-admin`),
+  at `…:<port+220>/wp-admin/`.
+
+The admin **email** for each falls back to `bitcart.admin_email` when not set
+explicitly, so a typical config supplies it once.
+
+> The BTCPay plugin's webhook is registered automatically during provisioning. If
+> CashuPayServer was not yet reachable at that moment, finish it with one click on
+> the WooCommerce **Settings → Payments → BTCPay** page (the URL/API key/store id
+> are already filled in).
+
 ## Testing
 
 ```bash
@@ -255,8 +319,8 @@ pytest
 
 Unit tests cover the deterministic core — config validation, port allocation,
 and the full generation step (compose, `bitcoin.conf`/`lnd.conf`, Cashu/mempool
-env, Caddyfile, firewall, Bitcart env, admin credentials) — and run in CI on
-every push/PR. A
+env, Caddyfile, firewall, Bitcart env, the CashuPayServer/WooCommerce storefront,
+admin credentials) — and run in CI on every push/PR. A
 Docker-gated test additionally validates the generated compose with
 `docker compose config` when Docker is present. Runtime behaviour that needs real
 chains/daemons (sync, Lightning, ACME, Bitcart's installer) is verified by

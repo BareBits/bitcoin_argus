@@ -9,6 +9,7 @@ import yaml
 from .bitcart import generate_bitcart
 from .builders import REGISTRY
 from .cashu_wallet import generate_cashu_wallet
+from .cashupayserver import generate_cashupayserver
 from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
 from .credentials import generate_credentials
@@ -153,6 +154,12 @@ def generate(
     wallet_dir = generate_cashu_wallet(cfg, output_dir)
     if wallet_dir is not None:
         dirs.append(wallet_dir)
+
+    # The shared CashuPayServer build context (one image, reused by every network's
+    # per-net cashupayserver containers). Built from source; spans all networks.
+    cps_dir = generate_cashupayserver(cfg, output_dir)
+    if cps_dir is not None:
+        dirs.append(cps_dir)
 
     # The shared Caddy layer always reflects the full set of enabled networks.
     shared_dir = generate_shared(cfg, port_map, output_dir)

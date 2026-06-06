@@ -84,6 +84,22 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                         ssl=cfg.global_.ssl_enabled and net.bitcart.ssl,
                     )
                 )
+        if net.cashupayserver.enabled:
+            sites.append(
+                _HttpSite(
+                    public_port=ports["cashupayserver_public"],
+                    backend_port=ports["cashupayserver_backend"],
+                    ssl=cfg.global_.ssl_enabled and net.cashupayserver.ssl,
+                )
+            )
+        if net.woocommerce.enabled:
+            sites.append(
+                _HttpSite(
+                    public_port=ports["woocommerce_public"],
+                    backend_port=ports["woocommerce_backend"],
+                    ssl=cfg.global_.ssl_enabled and net.woocommerce.ssl,
+                )
+            )
     return sites
 
 

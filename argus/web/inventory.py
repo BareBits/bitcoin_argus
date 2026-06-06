@@ -419,6 +419,34 @@ def _service_rows(
             )
         )
 
+    # CashuPayServer (BTCPay-compatible gateway backed by the mint).
+    if net.cashupayserver.enabled:
+        rows.append(
+            row(
+                "CashuPayServer",
+                "cashupayserver",
+                ports=[PortRef("HTTP", ports["cashupayserver_public"], public=True)],
+                links=[link("Admin", net.cashupayserver.ssl,
+                            ports["cashupayserver_public"], "admin.php")],
+                version=(g.cashupayserver_ref[:7] or None),
+                repo_url=SUBTOOL_REPO["cashupayserver"],
+            )
+        )
+
+    # WooCommerce storefront (WordPress + its own MariaDB).
+    if net.woocommerce.enabled:
+        rows.append(
+            row(
+                "WooCommerce store",
+                "woocommerce",
+                ports=[PortRef("HTTP", ports["woocommerce_public"], public=True)],
+                links=[link("Shop", net.woocommerce.ssl,
+                            ports["woocommerce_public"], "shop/")],
+                version=image_version(g.wordpress_image) or None,
+                repo_url=SUBTOOL_REPO["woocommerce"],
+            )
+        )
+
     return rows
 
 

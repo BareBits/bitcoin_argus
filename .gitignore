@@ -12,3 +12,8 @@ secrets/
 
 # Local Claude Code settings (machine-specific permissions)
 .claude/settings.local.json
+
+# Local environment / secrets — tokens etc. (NEVER commit)
+.env
+.env.*
+*.env

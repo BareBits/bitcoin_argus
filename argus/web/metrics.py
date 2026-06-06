@@ -54,8 +54,10 @@ _KEYWORD_BUCKETS = (
     "lnd2",
     "lnd3",
     "lnd",
+    "cashupayserver",  # before "cashu" so it isn't folded into the mint bucket
     "cashu-wallet",
     "cashu",
+    "woocommerce",  # catches woocommerce, woocommerce-db, woocommerce-init
     "mempool",
     "fulcrum",
 )

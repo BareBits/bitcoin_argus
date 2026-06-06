@@ -14,11 +14,13 @@ from ..context import BuildContext, Fragment
 from .bitcoind import build_bitcoind
 from .cashu import build_cashu
 from .cashu_wallet import build_cashu_wallet
+from .cashupayserver import build_cashupayserver
 from .donations import build_donations
 from .fulcrum import build_fulcrum
 from .lnd import build_lnd
 from .mempool import build_mempool
 from .miner import build_miner
+from .woocommerce import build_woocommerce
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,16 @@ REGISTRY: list[SubTool] = [
         build_cashu_wallet,
         lambda c: c.net.cashu.enabled and c.net.cashu.wallet,
     ),
+    # CashuPayServer (BTCPay-compatible gateway) and the WooCommerce storefront
+    # that points at it. CashuPayServer is listed first so its pairing volume is
+    # declared before WooCommerce references it (order is cosmetic for volumes,
+    # but it keeps the compose file readable).
+    SubTool(
+        "cashupayserver",
+        build_cashupayserver,
+        lambda c: c.net.cashupayserver.enabled,
+    ),
+    SubTool("woocommerce", build_woocommerce, lambda c: c.net.woocommerce.enabled),
     SubTool("mempool", build_mempool, lambda c: c.net.mempool_enabled(c.spec)),
     SubTool(
         "miner",

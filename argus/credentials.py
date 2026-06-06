@@ -1,9 +1,11 @@
 """Surface operator-facing admin login credentials for the deployed stack.
 
-Today this means the **Bitcart** admin login: Argus auto-generates its password
-(:mod:`argus.secrets`) and the BareBits installer bootstraps the first admin
-from it on deploy. The Cashu mint runs as an open mint (no login) and so is
-intentionally not listed here.
+This covers every component with an auto-generated admin login: **Bitcart**
+(bootstrapped by the BareBits installer), **CashuPayServer** (provisioned by its
+seed script), and the **WooCommerce/WordPress** storefront (provisioned by
+WP-CLI). Argus auto-generates each password (:mod:`argus.secrets`); the deploy
+steps bootstrap the matching admin from it. The Cashu mint runs as an open mint
+(no login) and so is intentionally not listed here.
 
 One source of truth feeds both surfaces:
 
@@ -35,6 +37,9 @@ class Credential:
     component: str
     username: str
     password: str | None  # None => not generated yet
+    # Label for the username line ("Email" for Bitcart, "Username" for the
+    # CashuPayServer/WooCommerce logins, which sign in by username, not email).
+    username_label: str = "Email"
     login_url: str | None = None
     # Same login over Tor (http://<onion>:<port>/), when the install runs Tor and
     # this service is exposed on its onion. None => clearnet only.
@@ -99,6 +104,47 @@ def build_credentials(
                     onion_url=onion,
                 )
             )
+
+        def _onion(port: int, path: str) -> str | None:
+            return (
+                f"http://{onion_hostname}:{port}{path}"
+                if onion_hostname and port in onion_ports.get(net_key, set())
+                else None
+            )
+
+        # CashuPayServer admin -- username "admin" (created by the seed script),
+        # password auto-generated. The admin UI lives at /admin.php.
+        cps = net.cashupayserver
+        if cps.enabled:
+            port = ports["cashupayserver_public"]
+            creds.append(
+                Credential(
+                    network=net_key,
+                    component="CashuPayServer admin",
+                    username="admin",
+                    username_label="Username",
+                    password=secrets.get("CASHUPAYSERVER_ADMIN_PASSWORD"),
+                    login_url=_url(cfg, cps.ssl, port) + "admin.php",
+                    onion_url=_onion(port, "/admin.php"),
+                )
+            )
+
+        # WooCommerce / WordPress admin -- username from config, password
+        # auto-generated. The dashboard is at /wp-admin/.
+        woo = net.woocommerce
+        if woo.enabled:
+            port = ports["woocommerce_public"]
+            creds.append(
+                Credential(
+                    network=net_key,
+                    component="WooCommerce admin",
+                    username=woo.admin_user,
+                    username_label="Username",
+                    password=secrets.get("WORDPRESS_ADMIN_PASSWORD"),
+                    login_url=_url(cfg, woo.ssl, port) + "wp-admin/",
+                    onion_url=_onion(port, "/wp-admin/"),
+                )
+            )
     return creds
 
 
@@ -134,7 +180,7 @@ def format_credentials(creds: list[Credential]) -> str:
                 lines.append(f"    URL:      {c.login_url}")
             if c.onion_url:
                 lines.append(f"    Onion:    {c.onion_url}")
-            lines.append(f"    Email:    {c.username}")
+            lines.append(f"    {(c.username_label + ':').ljust(9)} {c.username}")
             lines.append(f"    Password: {c.password_text}")
         lines.append("")
     return "\n".join(lines)
