@@ -6,7 +6,11 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from argus.constants import MAX_BLOCK_BYTES
+from argus.constants import (
+    DEFAULT_LONG_RESET_MAX_SIZE_GB,
+    MAX_BLOCK_BYTES,
+    NETWORK_SPECS,
+)
 from argus.generate import generate
 from argus.reset import (
     BYTES_PER_GB,
@@ -26,15 +30,55 @@ def test_reset_defaults_on_for_mined_networks():
         make(
             {
                 "regtest": {"enabled": True, "bitcart": BITCART_OFF},
-                "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+                "custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF},
             }
         )
     )
-    for key in ("regtest", "custom-signet"):
+    for key in ("regtest", "custom-signet-short"):
         net = cfg.networks[key]
         assert net.reset_enabled(key) is True
-        assert net.reset.max_size_gb == 30.0
+        # The field is unset (None => inherit); the resolver yields the standard cap.
+        assert net.reset.max_size_gb is None
+        assert net.reset_max_size_gb(NETWORK_SPECS[key]) == 30.0
         assert net.reset.check_interval_seconds == 300
+
+
+def test_long_signet_defaults_to_larger_cap():
+    """The long-lived signet defaults to the larger cap; the short-lived one and
+    regtest keep the standard 30 GB. An explicit value overrides either."""
+    cfg = validated(
+        make(
+            {
+                "custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF},
+                "custom-signet-long": {"enabled": True, "bitcart": BITCART_OFF},
+            }
+        )
+    )
+    short = cfg.networks["custom-signet-short"]
+    long = cfg.networks["custom-signet-long"]
+    assert short.reset_max_size_gb(NETWORK_SPECS["custom-signet-short"]) == 30.0
+    assert (
+        long.reset_max_size_gb(NETWORK_SPECS["custom-signet-long"])
+        == DEFAULT_LONG_RESET_MAX_SIZE_GB
+        == 300.0
+    )
+    assert long.reset_enabled("custom-signet-long") is True
+
+
+def test_reset_explicit_max_size_overrides_default():
+    cfg = validated(
+        make(
+            {
+                "custom-signet-long": {
+                    "enabled": True,
+                    "bitcart": BITCART_OFF,
+                    "reset": {"max_size_gb": 50},
+                }
+            }
+        )
+    )
+    net = cfg.networks["custom-signet-long"]
+    assert net.reset_max_size_gb(NETWORK_SPECS["custom-signet-long"]) == 50.0
 
 
 def test_reset_off_for_non_mined_networks():
@@ -170,6 +214,28 @@ def test_nets_tsv_contents(tmp_path):
     assert limit == str(10 * BYTES_PER_GB)
     assert gb == "10"
     assert netdir == "regtest"
+
+
+def test_nets_tsv_long_signet_uses_default_cap(tmp_path):
+    """With max_size_gb unset, the long-lived signet's row carries the 300 GB
+    default while the short-lived one carries the standard 30 GB."""
+    out = _gen(
+        tmp_path,
+        make(
+            {
+                "custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF},
+                "custom-signet-long": {"enabled": True, "bitcart": BITCART_OFF},
+            }
+        ),
+    )
+    rows = {
+        line.split("\t")[0]: line.split("\t")
+        for line in (out / "reset" / "nets.tsv").read_text().splitlines()
+    }
+    short, long = rows["custom-signet-short"], rows["custom-signet-long"]
+    # columns: net chain rpcport container interval limit gb netdir
+    assert short[5] == str(30 * BYTES_PER_GB) and short[6] == "30"
+    assert long[5] == str(300 * BYTES_PER_GB) and long[6] == "300"
 
 
 def test_controller_opt_mount_only_with_bitcart(tmp_path):

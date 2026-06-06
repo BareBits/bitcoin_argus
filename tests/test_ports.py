@@ -11,7 +11,10 @@ from helpers import BITCART_OFF, BITCART_OK, make, validated
 def test_block_base_ordering():
     assert block_base("regtest") == 30000
     assert block_base("signet") == 33000
-    assert block_base("custom-signet") == 35000
+    # The two custom signets are the last blocks; short keeps the original 35000
+    # so adding the long-lived one (36000) shifts no existing network's ports.
+    assert block_base("custom-signet-short") == 35000
+    assert block_base("custom-signet-long") == 36000
 
 
 def test_default_offsets():

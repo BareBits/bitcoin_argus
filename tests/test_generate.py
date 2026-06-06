@@ -75,9 +75,9 @@ def test_regtest_p2p_self_gated_by_default(tmp_path):
 def test_custom_signet_p2p_not_gated(tmp_path):
     # Custom-signet is never gated (outsiders can't mine it), so bitcoind uses the
     # plain image entrypoint (no self-gate wrapper).
-    out, _ = _gen(tmp_path, make({"custom-signet": {
+    out, _ = _gen(tmp_path, make({"custom-signet-short": {
         "enabled": True, "bitcart": BITCART_OFF}}))
-    compose = yaml.safe_load(_read(out / "custom-signet" / "docker-compose.yml"))
+    compose = yaml.safe_load(_read(out / "custom-signet-short" / "docker-compose.yml"))
     bitcoind = compose["services"]["bitcoind"]
     assert "35000:38333" in bitcoind["ports"]
     assert "entrypoint" not in bitcoind
@@ -183,15 +183,15 @@ def test_lnd_nodeinfo_sidecar(tmp_path):
 
 
 def test_donations_sidecar_reuses_mining_wallet(tmp_path):
-    # regtest + custom-signet mine into their own wallet; the donations sidecar
+    # regtest + custom-signet-short mine into their own wallet; the donations sidecar
     # must reuse it (never recreate — that would race the miner / drop the signer
     # key) and the donation address goes into that same single wallet.
     out, _ = _gen(tmp_path, make({
         "regtest": {"enabled": True, "bitcart": BITCART_OFF},
-        "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+        "custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF},
     }))
     for net, wallet, flag in (("regtest", "miner", "-regtest"),
-                              ("custom-signet", "signer", "-signet")):
+                              ("custom-signet-short", "signer", "-signet")):
         compose = yaml.safe_load(_read(out / net / "docker-compose.yml"))
         assert "donations" in compose["services"]
         d = compose["services"]["donations"]

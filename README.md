@@ -21,7 +21,7 @@ that network.
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **mempool** | Block explorer | HTTP via shared proxy |
-| **miner** (regtest / custom-signet) | Produces a (signed, for signet) block every minute | — |
+| **miner** (regtest / custom signets) | Produces a (signed, for signet) block every minute | — |
 | **reset controller** (mined nets) | Auto-resets a network when its chain outgrows a cap | none (Docker socket only) |
 
 A single host-level **Caddy** terminates TLS for all HTTP services across all
@@ -33,9 +33,12 @@ root (`https://<hostname>/`) and reports live, per-service disk/RAM usage. See
 
 ### Auto-reset
 
-The mined networks (regtest + custom-signet) grow without bound as blocks are
-produced. To keep disk in check, each has an optional **size cap** (`reset.max_size_gb`,
-default **30 GB**, on by default). When a network's on-disk chain
+The mined networks (regtest + the two custom signets) grow without bound as
+blocks are produced. To keep disk in check, each has an optional **size cap**
+(`reset.max_size_gb`, on by default). The default cap is per-network: **30 GB**
+for regtest and the **short-lived** custom signet, and **300 GB** for the
+**long-lived** custom signet (so it persists far longer between resets). When a
+network's on-disk chain
 (`getblockchaininfo.size_on_disk`) reaches the cap, the whole installation for
 that network is torn down (`docker compose down -v`) and re-deployed to its base
 config — wiping every coin, Lightning channel, transaction, and the
@@ -125,7 +128,7 @@ swap provider** (Loop/Boltz) — which is what makes it work on every testnet.
 
 Funding has two modes (`lnd.channels.funding`):
 
-- **`auto`** (default on networks Argus mines — regtest/custom-signet): the nodes
+- **`auto`** (default on networks Argus mines — regtest/custom signets): the nodes
   are funded `fund_btc` (default 25 BTC) each by mining. On **regtest** bitcoind
   keeps its P2P (mining) port closed until ring setup completes — so the funding
   can't be reorged out from under us — then **reopens it automatically**.
@@ -304,7 +307,7 @@ Lightning page on the local mempool when one runs, otherwise to mempool.space
 for the networks it covers (public signet, testnet3, testnet4).
 
 The real testnets run in their **native mempool network** (testnet3 → testnet,
-testnet4 → testnet4, custom-signet/mutinynet → signet): the explorer is served at
+testnet4 → testnet4, custom signets/mutinynet → signet): the explorer is served at
 the root path (`ROOT_NETWORK`) with the other networks hidden, so the selector
 lists only that network and mempool shows its own built-in "test coins have no
 value" warning. (The frontend image's nginx only proxies the root `/api`, hence
@@ -404,13 +407,18 @@ primary (`argus1`) is clearnet-only outbound, so it has no such dependency.
 - **mutinynet** — custom 30s-block signet; explorer on by default. Requires
   `global.bitcoind_knots_image` (a `signetblocktime`-capable bitcoind — no public
   image exists, so build one from MutinyWallet/mutiny-net or Bitcoin Knots).
-- **custom-signet** — a **self-mined** custom signet, **on by default**. Argus
-  auto-generates a matched signet challenge + block-signing key into
-  `secrets/custom-signet/` (supply your own `signet_challenge` only if you run
-  your own signer) and runs a signet-miner sidecar that signs and produces blocks
-  on an interval (default 1/min), just like regtest. The miner image is built
-  from the stock bitcoind image plus the vendored Bitcoin Core signet miner (see
-  `argus/signet_miner/`); no Knots build is needed.
+- **custom-signet-short / custom-signet-long** — **two self-mined** custom
+  signets, both **on by default**. They are independent chains: Argus
+  auto-generates a *separate* matched signet challenge + block-signing key for
+  each into `secrets/custom-signet-short/` and `secrets/custom-signet-long/`
+  (supply your own `signet_challenge` only if you run your own signer), and runs a
+  signet-miner sidecar per network that signs and produces blocks on an interval
+  (default 1/min), just like regtest. The two differ only in their default
+  auto-reset cap — **30 GB** (short-lived, disposable) vs **300 GB** (long-lived,
+  for tests that must run for weeks) — both overridable via `reset.max_size_gb`.
+  Each shows its own "resets in X" countdown on the dashboard. The miner image is
+  built from the stock bitcoind image plus the vendored Bitcoin Core signet miner
+  (see `argus/signet_miner/`); no Knots build is needed.
 
 ## Roadmap
 
@@ -418,9 +426,9 @@ primary (`argus1`) is clearnet-only outbound, so it has no such dependency.
 - [x] Phase 2 — standalone LND (bitcoind-backed, auto-init wallet)
 - [x] Phase 3 — Fulcrum (Electrum server; one+ per network)
 - [x] Phase 4 — shared Caddy (host-level TLS) + Cashu mint
-- [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom-signet/mutinynet)
+- [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom signets/mutinynet)
 - [x] Phase 6 — Bitcart (BareBits installer, own Neutrino LND → our bitcoind, behind Caddy)
-- [x] Phase 7 — all networks (testnet3/4, mutinynet, custom-signet) wired + validated
+- [x] Phase 7 — all networks (testnet3/4, mutinynet, custom signets) wired + validated
 - [x] Phase 8 — firewall script, SSL path, deploy docs
 - [x] Dashboard — welcome/status web server (themes, live per-service metrics)
 - [x] Self-mined custom signet — auto challenge/key + signet-miner sidecar

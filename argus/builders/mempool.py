@@ -2,8 +2,8 @@
 
 The backend talks to bitcoind (RPC) and to a Fulcrum indexer (Electrum backend);
 the frontend (nginx) is fronted by the shared Caddy. DB and backend are bound to
-127.0.0.1; the DB is internal-only. Default-on for regtest, custom-signet, and
-mutinynet (mempool.space covers the rest).
+127.0.0.1; the DB is internal-only. Default-on for regtest, the custom signets,
+and mutinynet (mempool.space covers the rest).
 """
 
 from __future__ import annotations

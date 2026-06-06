@@ -23,12 +23,13 @@ class Variant:
     cons: tuple[str, ...]
 
 
-# Recommended order: regtest -> custom signet -> mutinynet -> signet -> testnet4
-# -> testnet3. Developers should pick the most contained variant that still
-# exercises what they need.
+# Recommended order: regtest -> custom signets (short then long) -> mutinynet ->
+# signet -> testnet4 -> testnet3. Developers should pick the most contained variant
+# that still exercises what they need.
 VARIANT_ORDER: tuple[str, ...] = (
     "regtest",
-    "custom-signet",
+    "custom-signet-short",
+    "custom-signet-long",
     "mutinynet",
     "signet",
     "testnet4",
@@ -56,21 +57,45 @@ VARIANTS: dict[str, Variant] = {
             "Operator-controlled resets; coins/wallet admin (Core RPC) stay private",
         ),
     ),
-    "custom-signet": Variant(
-        key="custom-signet",
-        title="Custom Signet",
+    "custom-signet-short": Variant(
+        key="custom-signet-short",
+        title="Custom Signet (short-lived)",
         blurb=(
             "A signet whose blocks are produced with a private signing key held by "
             "the site operator. You get signet's realistic rules; the operator "
-            "decides when blocks are produced."
+            "decides when blocks are produced. This one is reset often (on a small "
+            "size cap), so it stays compact and disposable — reach for it first."
         ),
         pros=(
             "Realistic signet rules on a stable, reproducible chain",
             "Shared with you without being exposed to the whole world",
             "Connect wallets to the public indexer like any other network",
+            "Reset frequently, so it stays small and predictable",
         ),
         cons=(
             "Block production is operator-controlled (the operator holds the signer)",
+            "Resets relatively often — not for tests that must run for weeks",
+            "Smaller peer set than the public signet",
+        ),
+    ),
+    "custom-signet-long": Variant(
+        key="custom-signet-long",
+        title="Custom Signet (long-lived)",
+        blurb=(
+            "The same operator-signed custom signet, but with a much larger size "
+            "cap so it persists for long stretches before resetting. Use it when "
+            "you need a stable signet that survives for weeks — for soak tests, "
+            "long-running channels, and aged-chain conditions."
+        ),
+        pros=(
+            "Realistic signet rules on a long-lived, reproducible chain",
+            "Survives far longer between resets than the short-lived signet",
+            "Ideal for soak tests, long-running Lightning channels, and aged state",
+            "Connect wallets to the public indexer like any other network",
+        ),
+        cons=(
+            "Block production is operator-controlled (the operator holds the signer)",
+            "Grows much larger on disk before it resets",
             "Smaller peer set than the public signet",
         ),
     ),
@@ -165,11 +190,18 @@ WHEN_TO_USE: dict[str, tuple[str, ...]] = {
         "Great for smoke-testing wallets and indexers against a clean chain",
         "Lowest resource footprint of the hosted networks",
     ),
-    "custom-signet": (
+    "custom-signet-short": (
         "Realistic signet consensus rules without exposing your work publicly",
         "Stable, reproducible chain shared only with people you invite",
         "Operator-held signer means predictable, controlled block production",
-        "Ideal for private demos and integration tests that need signet semantics",
+        "Reset often, so it stays small — ideal for quick, disposable runs",
+        "Connect wallets to the public indexer like any other network",
+    ),
+    "custom-signet-long": (
+        "Realistic signet rules on a chain that persists for weeks, not hours",
+        "Best for soak tests and long-running Lightning channels that must age",
+        "Operator-held signer means predictable, controlled block production",
+        "Shared only with people you invite, like the short-lived signet",
         "Connect wallets to the public indexer like any other network",
     ),
     "mutinynet": (

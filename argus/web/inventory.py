@@ -440,7 +440,7 @@ def _reset_info(cfg: ArgusConfig, net_key: str, metrics: dict) -> ResetInfo | No
     net = cfg.networks[net_key]
     if not net.reset_enabled(net_key):
         return None
-    info = ResetInfo(max_size_gb=net.reset.max_size_gb)
+    info = ResetInfo(max_size_gb=net.reset_max_size_gb(NETWORK_SPECS[net_key]))
     state = (metrics.get("reset") or {}).get(net_key) or {}
     size = state.get("size_on_disk")
     if size is not None:

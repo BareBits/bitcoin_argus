@@ -1,4 +1,4 @@
-"""Auto-reset for the mined networks (regtest + custom-signet).
+"""Auto-reset for the mined networks (regtest + the two custom signets).
 
 When a mined network's on-disk chain (bitcoind ``size_on_disk``) grows past a
 configured cap, the whole installation for that network is torn down and
@@ -251,6 +251,7 @@ def _nets_tsv(cfg: ArgusConfig) -> str:
         net = cfg.networks[net_key]
         spec = NETWORK_SPECS[net_key]
         rpc_port = CHAIN_INTERNAL_PORTS[spec.chain]["rpc"]
+        max_size_gb = net.reset_max_size_gb(spec)
         rows.append(
             "\t".join(
                 [
@@ -259,8 +260,8 @@ def _nets_tsv(cfg: ArgusConfig) -> str:
                     str(rpc_port),
                     f"argus-{net_key}-bitcoind",
                     str(net.miner.block_interval_seconds),
-                    str(limit_bytes(net.reset.max_size_gb)),
-                    _fmt_gb(net.reset.max_size_gb),
+                    str(limit_bytes(max_size_gb)),
+                    _fmt_gb(max_size_gb),
                     net_key,  # netdir, relative to ARGUS_DEPLOY_ROOT (= generated/)
                 ]
             )
