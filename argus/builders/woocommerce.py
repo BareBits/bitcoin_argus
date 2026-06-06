@@ -33,11 +33,11 @@ from .cashupayserver import PAIRING_VOLUME
 # a handful of rows, and keeping RAM low is an explicit goal of this feature.
 _DB_BUFFER_POOL = "64M"
 
-# Extra wp-config.php directives baked by the WordPress image: kill the loopback
-# cron (saves a PHP spawn per request), cap memory, and lock down self-updates /
-# file editing. Order updates come from the BTCPay webhook, not cron.
+# Extra wp-config.php directives baked by the WordPress image: cap memory and
+# lock down self-updates / file editing. wp-cron is left ON — WooCommerce's Action
+# Scheduler (product lookup tables, housekeeping) relies on it, and it only fires
+# on a request when a task is actually due, so the overhead is negligible.
 _WP_CONFIG_EXTRA = (
-    "define('DISABLE_WP_CRON', true);\n"
     "define('WP_MEMORY_LIMIT', '128M');\n"
     "define('DISALLOW_FILE_EDIT', true);\n"
     "define('AUTOMATIC_UPDATER_DISABLED', true);\n"
@@ -232,6 +232,10 @@ $WP option update woocommerce_enable_guest_checkout yes
 $WP option update woocommerce_enable_signup_and_login_from_checkout no
 $WP option update woocommerce_enable_myaccount_registration no
 $WP option update woocommerce_registration_generate_username yes
+# Launch the store: WooCommerce 10.x ships a "Coming soon" mode that hides the
+# storefront until you launch it — turn it off so the shop + products are public.
+$WP option update woocommerce_coming_soon no || true
+$WP option update woocommerce_store_pages_only no || true
 # Skip the setup wizard + marketing/analytics/tracking bloat (best-effort: these
 # cosmetic options must not abort provisioning if a WC release rejects one).
 $WP option update woocommerce_onboarding_profile --format=json '{"skipped":true,"completed":true}' || true
@@ -287,6 +291,24 @@ $WP rewrite flush || true
 # dir exists so the card images can be sideloaded as product thumbnails.
 mkdir -p /var/www/html/wp-content/uploads 2>/dev/null || true
 $WP eval-file /provision/import-products.php
+
+# 10. Make the storefront the front page (no default blog) and remove WordPress's
+# default sample content (the "Hello world!" post and "Sample Page").
+SHOP_ID=$($WP option get woocommerce_shop_page_id 2>/dev/null || echo "")
+if [ -n "$SHOP_ID" ]; then
+    $WP option update show_on_front page
+    $WP option update page_on_front "$SHOP_ID"
+fi
+for slug in hello-world; do
+    ids=$($WP post list --post_type=post --post_status=any --name="$slug" --format=ids 2>/dev/null)
+    [ -n "$ids" ] && $WP post delete $ids --force || true
+done
+sample=$($WP post list --post_type=page --post_status=any --name=sample-page --format=ids 2>/dev/null)
+[ -n "$sample" ] && $WP post delete $sample --force || true
+
+# 11. Flush WooCommerce's Action Scheduler queue now so the product lookup tables
+# (used by the shop catalog query) are populated immediately on first load.
+$WP action-scheduler run --batches=5 >/dev/null 2>&1 || true
 
 log "WooCommerce provisioning complete."
 """

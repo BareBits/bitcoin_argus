@@ -201,6 +201,39 @@ def test_build_contexts_and_provision_files(tmp_path):
     assert "woocommerce_enable_guest_checkout yes" in prov
     assert "users_can_register 0" in prov
     assert "btcpay-greenfield-for-woocommerce" in prov
+    # Storefront launch + default-content cleanup + front page -> shop.
+    assert "woocommerce_coming_soon no" in prov
+    assert "page_on_front" in prov
+    assert "hello-world" in prov
+    # Seed wires auto-withdraw + derives an on-chain xpub from bitcoind.
+    assert "auto_melt_address" in seed
+    assert "derive_core_xpub" in seed
+
+
+def test_cashupayserver_init_env_autowithdraw_and_rpc(tmp_path):
+    # ssl on so the donate LNURL address resolves; acme email required then.
+    data = make(
+        {"regtest": dict(STORE_NET)},
+        ssl_enabled=True, acme_email="ops@example.com",
+    )
+    out, _ = _gen(tmp_path, data)
+    compose = yaml.safe_load((out / "regtest" / "docker-compose.yml").read_text())
+    env = compose["services"]["cashupayserver-init"]["environment"]
+    # Default network's bare donate address (regtest is first enabled here).
+    assert env["CASHUPAY_AUTOWITHDRAW_LN_ADDRESS"] == "donate@x.com"
+    assert env["CASHUPAY_RPC_URL"] == "http://bitcoind:18443"
+    assert env["CASHUPAY_ONCHAIN_NETWORK"] == "regtest"
+    assert env["CASHUPAY_ONCHAIN_WALLET"] == "argus-cashupay-regtest"
+
+
+def test_dashboard_lists_storefront_services():
+    from argus.web.inventory import build_sections
+    cfg = validated(make({"regtest": dict(STORE_NET)}))
+    pm = allocate(cfg)
+    sections = {s.key: s for s in build_sections(cfg, pm, {})}
+    names = {r.name for r in sections["regtest"].services}
+    assert "CashuPayServer" in names
+    assert "WooCommerce store" in names
 
 
 # --- shared Caddy + firewall + credentials + tor ----------------------------

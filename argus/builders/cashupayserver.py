@@ -19,11 +19,36 @@ name, not the public one.
 from __future__ import annotations
 
 from ..cashupayserver import CASHUPAYSERVER_IMAGE, CASHUPAYSERVER_REPO
-from ..constants import CASHUPAYSERVER_INTERNAL_PORT
+from ..constants import CASHUPAYSERVER_INTERNAL_PORT, CHAIN_INTERNAL_PORTS
 from ..context import BuildContext, Fragment
 
 # The mint's in-container port (see argus.builders.cashu._MINT_INTERNAL_PORT).
 _MINT_INTERNAL_PORT = 3338
+
+# bitcoind ``chain=`` selector -> the network name CashuPayServer's on-chain
+# module expects (it derives the address HRP from this).
+_ONCHAIN_NETWORK = {
+    "regtest": "regtest",
+    "test": "testnet",
+    "testnet4": "testnet4",
+    "signet": "signet",
+}
+
+
+def _donate_ln_address(ctx: BuildContext) -> str:
+    """This network's ``donate`` Lightning Address, or "" when LNURL can't supply
+    one. Mirrors argus.web.inventory.build_donations: bare ``donate@host`` for the
+    LNURL default network, ``donate-<net>@host`` elsewhere. Only clearnet HTTPS
+    resolves it (a paying wallet fetches it over https), so it needs ssl_enabled.
+    """
+    cfg = ctx.cfg
+    lnurl = cfg.web.lnurl
+    if not (cfg.web.enabled and lnurl.enabled and cfg.global_.ssl_enabled):
+        return ""
+    enabled = [k for k, _ in cfg.enabled_networks()]
+    default_net = lnurl.default_network or (enabled[0] if enabled else None)
+    local = "donate" if ctx.net_key == default_net else f"donate-{ctx.net_key}"
+    return f"{local}@{cfg.global_.hostname}"
 
 # Where the init writes the WooCommerce pairing JSON (api key + store id), on a
 # volume also mounted by woocommerce-init. See argus.builders.woocommerce.
@@ -39,6 +64,14 @@ def build_cashupayserver(ctx: BuildContext) -> Fragment:
     base_url = f"{scheme}://{g.hostname}:{ctx.ports['cashupayserver_public']}"
     # Server-side mint endpoint on the per-network Docker network.
     mint_url = f"http://cashu:{_MINT_INTERNAL_PORT}"
+    # Auto-withdraw (auto-melt) target: this network's donation Lightning Address,
+    # so collected ecash settles back to the network's own LND node.
+    autowithdraw = _donate_ln_address(ctx)
+    # bitcoind JSON-RPC on the per-network Docker network — the seed derives an
+    # on-chain receive xpub from a dedicated descriptor wallet here.
+    rpc_port = CHAIN_INTERNAL_PORTS[ctx.spec.chain]["rpc"]
+    rpc_url = f"http://bitcoind:{rpc_port}"
+    onchain_network = _ONCHAIN_NETWORK.get(ctx.spec.chain, "")
 
     build = {
         "context": "../cashupayserver",
@@ -69,6 +102,15 @@ def build_cashupayserver(ctx: BuildContext) -> Fragment:
             "CASHUPAY_SUBMARINE_SWAPS": "1" if cps.submarine_swaps else "0",
             "CASHUPAY_PAIRING_FILE": PAIRING_PATH,
             "CASHUPAY_API_LABEL": "woocommerce",
+            # Auto-withdraw collected ecash to the network's donation LN address.
+            "CASHUPAY_AUTOWITHDRAW_LN_ADDRESS": autowithdraw,
+            # On-chain receive: derive an xpub from this network's bitcoind.
+            "CASHUPAY_RPC_URL": rpc_url,
+            "CASHUPAY_RPC_USER": "${RPC_USER}",
+            "CASHUPAY_RPC_PASSWORD": "${RPC_PASSWORD}",
+            "CASHUPAY_ONCHAIN_NETWORK": onchain_network,
+            "CASHUPAY_ONCHAIN_ADDRESS_TYPE": "P2WPKH",
+            "CASHUPAY_ONCHAIN_WALLET": f"argus-cashupay-{ctx.net_key}",
         },
         "volumes": [
             "cashupayserver_data:/var/www/html/data",

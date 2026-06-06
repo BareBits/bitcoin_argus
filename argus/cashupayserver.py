@@ -119,6 +119,11 @@ _SEED_PHP = r"""<?php
  *   CASHUPAY_SUBMARINE_SWAPS  "1" to enable swaps, "0" to disable (default "0")
  *   CASHUPAY_PAIRING_FILE     where to write the WooCommerce pairing JSON
  *   CASHUPAY_API_LABEL        label for the WooCommerce API key (default "woocommerce")
+ *   CASHUPAY_AUTOWITHDRAW_LN_ADDRESS  Lightning Address to auto-withdraw to (opt.)
+ *   CASHUPAY_RPC_URL/USER/PASSWORD    bitcoind JSON-RPC, to derive an on-chain xpub
+ *   CASHUPAY_ONCHAIN_NETWORK          regtest|testnet|testnet4|signet (opt.)
+ *   CASHUPAY_ONCHAIN_ADDRESS_TYPE     P2WPKH (default) | P2SH-P2WPKH
+ *   CASHUPAY_ONCHAIN_WALLET           bitcoind descriptor-wallet name to derive from
  */
 
 if (php_sapi_name() !== 'cli') {
@@ -128,6 +133,48 @@ if (php_sapi_name() !== 'cli') {
 
 function seed_log(string $m): void { fwrite(STDOUT, "[seed-cashupay] $m\n"); }
 function seed_fail(string $m): int { fwrite(STDERR, "[seed-cashupay] ERROR: $m\n"); return 1; }
+
+/** Minimal bitcoind JSON-RPC call via curl. Returns the decoded array or null. */
+function btc_rpc(string $url, string $user, string $pass, string $method, array $params = []): ?array {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode([
+            'jsonrpc' => '1.0', 'id' => 'argus', 'method' => $method, 'params' => $params,
+        ]),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_USERPWD => "$user:$pass",
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_TIMEOUT => 20,
+    ]);
+    $resp = curl_exec($ch);
+    curl_close($ch);
+    if ($resp === false) { return null; }
+    $j = json_decode($resp, true);
+    return is_array($j) ? $j : null;
+}
+
+/** Create (idempotently) a descriptor wallet in bitcoind and return its account
+ *  xpub for native-segwit receive (the wpkh .../0/* descriptor's key). null on
+ *  failure. CashuPayServer derives m/0/N from this, matching the wallet's own
+ *  external chain, so funds land in a wallet bitcoind controls. */
+function derive_core_xpub(string $base, string $user, string $pass, string $wallet): ?string {
+    // descriptors=true, load_on_startup=true; ignore "already exists" (-4).
+    btc_rpc($base, $user, $pass, 'createwallet', [$wallet, false, false, '', false, true, true]);
+    btc_rpc($base, $user, $pass, 'loadwallet', [$wallet]);  // no-op if already loaded
+    $wurl = rtrim($base, '/') . '/wallet/' . rawurlencode($wallet);
+    $r = btc_rpc($wurl, $user, $pass, 'listdescriptors', []);
+    $descs = $r['result']['descriptors'] ?? null;
+    if (!is_array($descs)) { return null; }
+    foreach ($descs as $d) {
+        $desc = $d['desc'] ?? '';
+        if (strpos($desc, 'wpkh(') === 0 && strpos($desc, '/0/*') !== false) {
+            if (preg_match('#\]([a-zA-Z0-9]+)/0/\*#', $desc, $m)) { return $m[1]; }
+            if (preg_match('#wpkh\(([a-zA-Z0-9]+)/0/\*#', $desc, $m)) { return $m[1]; }
+        }
+    }
+    return null;
+}
 
 $root = getenv('CASHUPAY_APP_ROOT') ?: '/var/www/html';
 require_once $root . '/includes/database.php';
@@ -143,6 +190,13 @@ $baseUrl   = getenv('CASHUPAY_BASE_URL') ?: '';
 $swapsOn   = (getenv('CASHUPAY_SUBMARINE_SWAPS') === '1');
 $pairing   = getenv('CASHUPAY_PAIRING_FILE') ?: '/pairing/pairing.json';
 $apiLabel  = getenv('CASHUPAY_API_LABEL') ?: 'woocommerce';
+$autoLnAddr = getenv('CASHUPAY_AUTOWITHDRAW_LN_ADDRESS') ?: '';
+$rpcUrl     = getenv('CASHUPAY_RPC_URL') ?: '';
+$rpcUser    = getenv('CASHUPAY_RPC_USER') ?: '';
+$rpcPass    = getenv('CASHUPAY_RPC_PASSWORD') ?: '';
+$onchainNet = getenv('CASHUPAY_ONCHAIN_NETWORK') ?: '';
+$onchainType = getenv('CASHUPAY_ONCHAIN_ADDRESS_TYPE') ?: 'P2WPKH';
+$onchainWallet = getenv('CASHUPAY_ONCHAIN_WALLET') ?: '';
 
 if ($adminPw === '' || $mintUrl === '') {
     exit(seed_fail('CASHUPAY_ADMIN_PASSWORD and CASHUPAY_MINT_URL are required'));
@@ -203,6 +257,38 @@ try {
             'mint_unit'     => $mintUnit,
         ], 'id = ?', [$storeId]);
         seed_log("using existing store: $storeId");
+    }
+
+    // Auto-withdraw (auto-melt) collected ecash to the donation Lightning Address.
+    // Lightning mode (auto_melt_use_swap=0); re-asserted every run (idempotent).
+    if ($autoLnAddr !== '') {
+        Database::update('stores', [
+            'auto_melt_enabled'  => 1,
+            'auto_melt_address'  => $autoLnAddr,
+            'auto_melt_use_swap' => 0,
+        ], 'id = ?', [$storeId]);
+        seed_log("auto-withdraw set to $autoLnAddr");
+    }
+
+    // On-chain receive: derive a watch-only xpub from this network's bitcoind and
+    // enable on-chain payments. Only when not already configured (the derived xpub
+    // is stable as long as the descriptor wallet persists). Best-effort: a node
+    // that isn't reachable yet just leaves on-chain off until the next run.
+    $store = Database::fetchOne('SELECT onchain_xpub FROM stores WHERE id = ?', [$storeId]);
+    $haveXpub = $store && !empty($store['onchain_xpub']);
+    if (!$haveXpub && $rpcUrl !== '' && $onchainWallet !== '') {
+        $xpub = derive_core_xpub($rpcUrl, $rpcUser, $rpcPass, $onchainWallet);
+        if ($xpub) {
+            Database::update('stores', [
+                'onchain_address_mode' => 'xpub',
+                'onchain_xpub'         => $xpub,
+                'onchain_network'      => $onchainNet,
+                'onchain_address_type' => $onchainType,
+            ], 'id = ?', [$storeId]);
+            seed_log("on-chain xpub derived from bitcoind ($onchainNet, $onchainType)");
+        } else {
+            seed_log('WARNING: could not derive on-chain xpub from bitcoind (leaving on-chain off).');
+        }
     }
 
     // Ensure exactly one WooCommerce API key; reuse the existing pairing when the

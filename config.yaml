@@ -22,7 +22,7 @@ global:
   # git ref it clones. The WooCommerce storefront uses the official images, with
   # WooCommerce + the BTCPay plugin installed at provision time (empty => latest).
   # cashupayserver_ref: main
-  # wordpress_image: wordpress:6.9.4-php8.3-apache   # WooCommerce needs WP >= 6.9
+  # wordpress_image: wordpress:7.0.0-php8.3-apache   # WooCommerce needs WP >= 6.9
   # wordpress_cli_image: wordpress:cli-php8.3
   # woocommerce_version: ""           # e.g. "9.4.2" to pin; empty => latest
   # btcpay_woocommerce_version: ""    # e.g. "4.4.0" to pin; empty => latest
