@@ -39,7 +39,7 @@ class ConfigError(Exception):
 _HOSTNAME_LABEL = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
 
 # Networks whose block production Argus can drive itself.
-_MINEABLE_NETWORKS = {"regtest", "custom-signet"}
+_MINEABLE_NETWORKS = {"regtest", "custom-signet-short", "custom-signet-long"}
 
 
 def _is_valid_host(value: str) -> bool:
@@ -275,7 +275,7 @@ class LndChannelsCfg(_Base):
     coins:
 
     * ``auto`` — mine + fund from the miner/signer wallet (only on networks Argus
-      mines: regtest/custom-signet).
+      mines: regtest/custom signets).
     * ``external`` — wait for coins sent to each node's on-chain address (e.g. a
       public faucet); the operator dashboard surfaces the addresses to fund.
 
@@ -414,7 +414,7 @@ class MempoolCfg(_Base):
 
 
 class MinerCfg(_Base):
-    """Regtest/custom-signet block production."""
+    """Regtest / custom-signet block production."""
 
     enabled: bool = True
     block_interval_seconds: int = Field(default=60, ge=1)
@@ -424,18 +424,24 @@ class MinerCfg(_Base):
 class ResetCfg(_Base):
     """Auto-reset a mined network when its chain outgrows a size cap.
 
-    Only meaningful on the networks Argus mines (regtest/custom-signet) — see
-    ``constants.RESET_NETWORKS``. When the network's bitcoind ``size_on_disk``
-    reaches ``max_size_gb``, the whole installation for that network is torn down
-    (``docker compose down -v``) and re-deployed to its base config — wiping all
-    coins, Lightning channels, transactions, mempool/Fulcrum/Cashu state, and
-    Bitcart. ``enabled`` is tri-state: None => on for the mined networks, off
-    elsewhere. (A custom signet keeps its challenge/signing key, so it resets to
-    genesis as the *same* signet.)
+    Only meaningful on the networks Argus mines (regtest and the two custom
+    signets) — see ``constants.RESET_NETWORKS``. When the network's bitcoind
+    ``size_on_disk`` reaches the effective cap, the whole installation for that
+    network is torn down (``docker compose down -v``) and re-deployed to its base
+    config — wiping all coins, Lightning channels, transactions,
+    mempool/Fulcrum/Cashu state, and Bitcart. ``enabled`` is tri-state: None => on
+    for the mined networks, off elsewhere. (A custom signet keeps its
+    challenge/signing key, so it resets to genesis as the *same* signet.)
+
+    ``max_size_gb`` is tri-state too: None => the network's default cap (the
+    standard ``DEFAULT_RESET_MAX_SIZE_GB`` for regtest/short-lived signet, the
+    larger ``DEFAULT_LONG_RESET_MAX_SIZE_GB`` for the long-lived signet); an
+    explicit value always wins. Resolve it with
+    :meth:`NetworkCfg.reset_max_size_gb`, never read this field directly.
     """
 
     enabled: bool | None = None
-    max_size_gb: float = Field(default=DEFAULT_RESET_MAX_SIZE_GB, gt=0)
+    max_size_gb: float | None = Field(default=None, gt=0)
     check_interval_seconds: int = Field(default=DEFAULT_RESET_CHECK_INTERVAL, ge=1)
 
 
@@ -531,6 +537,21 @@ class NetworkCfg(_Base):
         v = self.reset.enabled
         return (net_key in _MINEABLE_NETWORKS) if v is None else v
 
+    def reset_max_size_gb(self, spec: NetworkSpec) -> float:
+        """Effective auto-reset cap (GiB) for this network.
+
+        Tri-state: an explicit ``reset.max_size_gb`` always wins; otherwise the
+        network's own default (``spec.default_reset_max_size_gb`` — larger for the
+        long-lived signet), falling back to the standard
+        ``DEFAULT_RESET_MAX_SIZE_GB``. Always returns a positive float, so callers
+        (reset controller, dashboard countdown) never see ``None``.
+        """
+        if self.reset.max_size_gb is not None:
+            return self.reset.max_size_gb
+        if spec.default_reset_max_size_gb is not None:
+            return spec.default_reset_max_size_gb
+        return DEFAULT_RESET_MAX_SIZE_GB
+
     def lnd_channels_enabled(self, spec: NetworkSpec) -> bool:
         """Whether the liquidity ring (fund + open the 3-node channel ring) runs.
 
@@ -586,7 +607,7 @@ class NetworkCfg(_Base):
         it keeps inbound P2P closed until LND channel setup completes, then
         restarts with P2P open — so funding can't be reorged during setup.
 
-        Only regtest needs this — on custom-signet outsiders can't produce valid
+        Only regtest needs this — on a custom signet outsiders can't produce valid
         blocks without our signing key, so early P2P exposure can't be abused.
         """
         return (
@@ -789,7 +810,7 @@ class ArgusConfig(_Base):
 
             # Where mining isn't supported (testnet3/4, public signet, mutinynet)
             # the miner flag is simply a no-op (the registry won't include it).
-            # regtest and custom-signet are the chains Argus can drive.
+            # regtest and the custom signets are the chains Argus can drive.
             if net.miner.enabled and spec.supports_miner and key not in _MINEABLE_NETWORKS:
                 errors.append(
                     f"[{key}] automated mining is not implemented for this network"
@@ -829,7 +850,7 @@ class ArgusConfig(_Base):
             if net.reset.enabled and key not in _MINEABLE_NETWORKS:
                 errors.append(
                     f"[{key}] reset (auto chain-size reset) is only supported on "
-                    f"networks Argus mines (regtest/custom-signet)"
+                    f"networks Argus mines (regtest and the custom signets)"
                 )
 
             # Bitcart requires an admin email; an active liquidity helper needs

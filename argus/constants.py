@@ -32,17 +32,31 @@ class NetworkSpec:
     needs_knots: bool  # network requires the Knots build (signetblocktime support)
     default_mempool: bool  # is the self-hosted explorer on by default?
     supports_miner: bool  # can Argus drive block production for this net?
+    # Per-network default auto-reset cap (GiB) when the operator doesn't pin one.
+    # None => fall back to DEFAULT_RESET_MAX_SIZE_GB. The two custom signets differ
+    # only here: the short-lived one keeps the standard cap, the long-lived one
+    # defaults much higher so it survives far longer between resets.
+    default_reset_max_size_gb: float | None = None
 
 
 # Fixed ordering — drives the port-block assignment, so it must remain stable.
+# The two custom signets are appended last (short keeps the original 35000 block;
+# long gets 36000) so adding the long-lived one shifts no existing network's ports.
 NETWORK_ORDER: tuple[str, ...] = (
     "regtest",
     "testnet3",
     "testnet4",
     "signet",
     "mutinynet",
-    "custom-signet",
+    "custom-signet-short",
+    "custom-signet-long",
 )
+
+# Default auto-reset caps (GiB). The standard cap (DEFAULT_RESET_MAX_SIZE_GB,
+# defined with the rest of the reset knobs below) applies to regtest and the
+# short-lived signet; the long-lived signet defaults to this larger cap so it
+# persists far longer between resets. Both stay operator-overridable per network.
+DEFAULT_LONG_RESET_MAX_SIZE_GB = 300.0
 
 NETWORK_SPECS: dict[str, NetworkSpec] = {
     "regtest": NetworkSpec(
@@ -71,10 +85,21 @@ NETWORK_SPECS: dict[str, NetworkSpec] = {
         True,
         False,
     ),
-    # Operator-defined signet: challenge is auto-generated and we mine it
+    # Operator-defined signets: the challenge is auto-generated and we mine it
     # ourselves with the signet miner. Stock bitcoind suffices (no Knots needed).
-    "custom-signet": NetworkSpec(
-        "custom-signet", "signet", True, True, None, (), None, False, True, True
+    # Two ship by default and are identical apart from their default reset cap:
+    #   * short-lived — the standard cap (DEFAULT_RESET_MAX_SIZE_GB); resets often,
+    #     like regtest, so it stays small and disposable.
+    #   * long-lived — a much larger default cap, for testing conditions that need
+    #     the chain to persist for longer stretches.
+    # Each gets its OWN auto-generated challenge + signing key (secrets/<key>/), so
+    # they are two genuinely independent signets, not two views of one chain.
+    "custom-signet-short": NetworkSpec(
+        "custom-signet-short", "signet", True, True, None, (), None, False, True, True
+    ),
+    "custom-signet-long": NetworkSpec(
+        "custom-signet-long", "signet", True, True, None, (), None, False, True, True,
+        default_reset_max_size_gb=DEFAULT_LONG_RESET_MAX_SIZE_GB,
     ),
 }
 
@@ -224,9 +249,13 @@ DEFAULT_LOG_MAX_FILE = 3
 # their chain grows past a configured cap. Resetting a chain we don't control
 # (the real testnets / public signet) would be meaningless, so reset is only
 # offered here. Mirrors config._MINEABLE_NETWORKS.
-RESET_NETWORKS: frozenset[str] = frozenset({"regtest", "custom-signet"})
+RESET_NETWORKS: frozenset[str] = frozenset(
+    {"regtest", "custom-signet-short", "custom-signet-long"}
+)
 
-# Default cap on a mined network's on-disk chain size (GiB) before it is reset.
+# Standard cap on a mined network's on-disk chain size (GiB) before it is reset.
+# Applies to regtest and the short-lived signet; the long-lived signet defaults to
+# DEFAULT_LONG_RESET_MAX_SIZE_GB (see NETWORK_SPECS above).
 DEFAULT_RESET_MAX_SIZE_GB = 30.0
 # How often the reset controller polls each network's size_on_disk (seconds).
 DEFAULT_RESET_CHECK_INTERVAL = 300
@@ -246,8 +275,8 @@ RESET_STATE_FILE = "/state/reset_state.json"
 
 # Argus chain -> mempool's network slot. The real testnets use their native slot
 # so the explorer labels them correctly and shows mempool's built-in "test coins
-# have no value" warning (custom-signet + mutinynet share chain="signet" and so
-# the signet slot — fine, each runs its own instance). regtest is the exception:
+# have no value" warning (the custom signets + mutinynet share chain="signet" and
+# so the signet slot — fine, each runs its own instance). regtest is the exception:
 # mempool's frontend hardcodes regtest out of BOTH its testnet-warning list AND
 # its Lightning-supported network list, so we run it in the "mainnet" slot
 # instead (network="") — that keeps the Lightning Explorer nav enabled — and add

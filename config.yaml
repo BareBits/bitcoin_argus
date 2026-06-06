@@ -2,8 +2,9 @@
 #
 # One hostname is shared by every network; services are reached on different
 # ports. Each network gets a 1000-port block (regtest=30000, testnet3=31000,
-# testnet4=32000, signet=33000, mutinynet=34000, custom-signet=35000). Run
-# `argus ports` to see the full allocation, and `argus validate` to check it.
+# testnet4=32000, signet=33000, mutinynet=34000, custom-signet-short=35000,
+# custom-signet-long=36000). Run `argus ports` to see the full allocation, and
+# `argus validate` to check it.
 
 global:
   hostname: myfaucet.com          # shared by ALL networks (services differ by port)
@@ -120,11 +121,16 @@ networks:
     # signet_challenge + seed node are built in; mempool defaults on.
     # Requires global.bitcoind_knots_image (signetblocktime-capable bitcoind).
 
-  custom-signet:
+  # Two self-mined custom signets ship on by default. They are independent chains
+  # (each gets its OWN auto-generated challenge + signing key) and differ only in
+  # how often they auto-reset on a size cap:
+  #   * short-lived — resets every 30 GB (like regtest); small and disposable.
+  #   * long-lived  — resets every 300 GB; persists for long-running tests.
+  custom-signet-short:
     enabled: true                 # self-mined custom signet, on by default
     # signet_challenge: leave unset — Argus auto-generates a matched challenge +
-    # block-signing key into secrets/custom-signet/. Set it only to bring your own
-    # (in which case you also run your own signer).
+    # block-signing key into secrets/custom-signet-short/. Set it only to bring
+    # your own (in which case you also run your own signer).
     miner:
       enabled: true               # Argus signs + mines blocks for this signet
       block_interval_seconds: 60  # one signed block per minute
@@ -132,6 +138,23 @@ networks:
       enabled: true               # auto-reset on size cap (keeps the signet's
       max_size_gb: 30             # challenge/key — resets to genesis as the
                                   # SAME custom signet, just wiped to base config)
+    bitcart:
+      admin_email: admin@example.com
+      liquidity:
+        cashout_lightning_address: pay@example.com
+
+  custom-signet-long:
+    enabled: true                 # self-mined, long-lived custom signet
+    # signet_challenge: leave unset — Argus auto-generates a matched challenge +
+    # block-signing key into secrets/custom-signet-long/ (independent of the
+    # short-lived signet's key, so these are two separate chains).
+    miner:
+      enabled: true               # Argus signs + mines blocks for this signet
+      block_interval_seconds: 60  # one signed block per minute
+    reset:
+      enabled: true               # auto-reset on size cap; this network defaults
+      # max_size_gb: 300          # to 300 GB (left unset = the long-lived default;
+                                  # uncomment to raise/lower the threshold).
     bitcart:
       admin_email: admin@example.com
       liquidity:
@@ -186,8 +209,10 @@ networks:
 #             (indexes the local LND graph)
 #   reset:    { enabled, max_size_gb, check_interval_seconds }     # mined nets only
 #             # auto tear-down + re-deploy to base config when the chain's
-#             # size_on_disk reaches max_size_gb (default 30). enabled defaults on
-#             # for regtest/custom-signet, off elsewhere (rejected if set there).
+#             # size_on_disk reaches max_size_gb. enabled defaults on for regtest
+#             # and the custom signets, off elsewhere (rejected if set there).
+#             # max_size_gb defaults per network when unset: 30 for regtest and the
+#             # short-lived signet, 300 for the long-lived signet.
 #   resources: { profile, log_rotation, bitcoind_dbcache, bitcoind_maxmempool,
 #                fulcrum_db_mem, fulcrum_db_max_open_files,
 #                mempool_mariadb_buffer_mb }  # per-network override of global

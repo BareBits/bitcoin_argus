@@ -37,7 +37,7 @@ def _initial_blocks(ctx: BuildContext) -> int:
     When auto-channels are on, the funding wallet must hold enough *matured*
     coinbase to send each node ``fund_btc`` and keep the core reserve, so we bump
     the initial height to mature enough coinbases (a coinbase at height h matures
-    at h+100). For custom-signet this is essential — the signer is the only block
+    at h+100). For a custom signet this is essential — the signer is the only block
     producer; on regtest the setup sidecar can also mine on demand.
     """
     configured = ctx.net.miner.initial_blocks

@@ -33,7 +33,7 @@ BITCART_LNURL = {"admin_email": "admin@example.com", "liquidity": {}}
 def _cfg(ssl=True, lnurl=None, networks=None, **global_over):
     nets = networks or {
         "regtest": {"enabled": True, "bitcart": {"enabled": False}},
-        "custom-signet": {"enabled": True, "bitcart": {"enabled": False}},
+        "custom-signet-short": {"enabled": True, "bitcart": {"enabled": False}},
     }
     if ssl:
         global_over.setdefault("acme_email", "ops@example.com")
@@ -90,16 +90,16 @@ def test_parse_name_bare_and_per_net():
         r = svc.parse_name(purpose)
         assert r is not None and r.purpose == purpose and r.net_key == "regtest"
         # The per-net form for a non-default network resolves to that network.
-        r2 = svc.parse_name(f"{purpose}-custom-signet")
-        assert r2 is not None and r2.net_key == "custom-signet"
+        r2 = svc.parse_name(f"{purpose}-custom-signet-short")
+        assert r2 is not None and r2.net_key == "custom-signet-short"
         assert r2.chain == "signet"
 
 
 def test_parse_name_hyphenated_network():
-    # custom-signet contains a hyphen; the split must keep it intact.
+    # custom-signet-short contains a hyphen; the split must keep it intact.
     svc = LnurlService(_cfg())
-    r = svc.parse_name("referral-custom-signet")
-    assert r is not None and r.purpose == "referral" and r.net_key == "custom-signet"
+    r = svc.parse_name("referral-custom-signet-short")
+    assert r is not None and r.purpose == "referral" and r.net_key == "custom-signet-short"
 
 
 def test_parse_name_rejects_unknown():
@@ -120,7 +120,7 @@ def test_parse_name_disabled_service():
 def test_address_bare_vs_per_net():
     svc = LnurlService(_cfg())
     assert svc.address("donate", "regtest", "h.com") == "donate@h.com"
-    assert svc.address("donate", "custom-signet", "h.com") == "donate-custom-signet@h.com"
+    assert svc.address("donate", "custom-signet-short", "h.com") == "donate-custom-signet-short@h.com"
 
 
 # --- LUD-06 payRequest -------------------------------------------------------
@@ -321,7 +321,7 @@ def test_donations_lightning_address_with_ssl():
     rows = {r.key: r for r in build_donations(cfg, {})}
     # Bare donate@ for the default network (regtest), per-net for the other.
     assert rows["regtest"].lightning_address == "donate@faucet.example"
-    assert rows["custom-signet"].lightning_address == "donate-custom-signet@faucet.example"
+    assert rows["custom-signet-short"].lightning_address == "donate-custom-signet-short@faucet.example"
     # No Tor configured -> no onion address.
     assert rows["regtest"].lightning_onion is None
 
@@ -361,7 +361,7 @@ def test_web_joins_per_net_networks_when_lnurl_on(tmp_path):
     data = make(
         {
             "regtest": {"enabled": True, "bitcart": {"enabled": False}},
-            "custom-signet": {"enabled": True, "bitcart": {"enabled": False}},
+            "custom-signet-short": {"enabled": True, "bitcart": {"enabled": False}},
         },
         ssl_enabled=True,
         hostname="faucet.example",
@@ -370,7 +370,7 @@ def test_web_joins_per_net_networks_when_lnurl_on(tmp_path):
     compose = _web_compose(tmp_path, data)
     nets = compose["networks"]
     # Each enabled network's compose network is declared external and joined.
-    for key in ("regtest", "custom-signet"):
+    for key in ("regtest", "custom-signet-short"):
         alias = f"net-{key}"
         assert nets[alias] == {"name": f"argus-{key}-net", "external": True}
         assert alias in compose["services"]["web"]["networks"]
@@ -434,7 +434,7 @@ def _liq_env(net_key, **liq):
             "enabled": True,
             "bitcart": {"admin_email": "a@b.com", "liquidity": liq},
         },
-        "custom-signet": {
+        "custom-signet-short": {
             "enabled": True,
             "bitcart": {"admin_email": "a@b.com", "liquidity": liq},
         },
@@ -453,10 +453,10 @@ def test_liquidity_wired_to_lnurl_addresses():
     assert rt["LIQUIDITYHELPER_LN_FEE_DEST"] == "fees@faucet.example"
     assert rt["LIQUIDITYHELPER_REFERRAL_FEE_DEST"] == "referral@faucet.example"
 
-    cs = _liq_env("custom-signet")
-    assert cs["CASHOUT_LIGHTNING_ADDRESS"] == "cashout-custom-signet@faucet.example"
-    assert cs["LIQUIDITYHELPER_LN_FEE_DEST"] == "fees-custom-signet@faucet.example"
-    assert cs["LIQUIDITYHELPER_REFERRAL_FEE_DEST"] == "referral-custom-signet@faucet.example"
+    cs = _liq_env("custom-signet-short")
+    assert cs["CASHOUT_LIGHTNING_ADDRESS"] == "cashout-custom-signet-short@faucet.example"
+    assert cs["LIQUIDITYHELPER_LN_FEE_DEST"] == "fees-custom-signet-short@faucet.example"
+    assert cs["LIQUIDITYHELPER_REFERRAL_FEE_DEST"] == "referral-custom-signet-short@faucet.example"
 
 
 def test_liquidity_operator_cashout_override_wins():

@@ -1,7 +1,7 @@
 """Builder for the donations / coin-recycling sidecar.
 
 Every enabled network gets a single bitcoind wallet. On the *mined* networks
-(regtest -> ``miner``, custom-signet -> ``signer``) that wallet already exists and
+(regtest -> ``miner``, custom signet -> ``signer``) that wallet already exists and
 receives the mined coinbase, so this sidecar reuses it — it must NOT recreate it
 (recreating ``signer`` would lose the block-signing descriptor, and recreating
 either could race the miner). On the non-mined networks bitcoind has no wallet of

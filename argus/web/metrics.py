@@ -62,8 +62,10 @@ _KEYWORD_BUCKETS = (
 
 def _split_net(rest: str) -> tuple[str | None, str]:
     """Peel a known network key off the front of ``rest`` (after stripping the
-    ``argus-``/``argus-bitcart-`` prefix). Longest match wins so ``custom-signet``
-    is not shadowed by a hypothetical shorter key."""
+    ``argus-``/``argus-bitcart-`` prefix). Longest match wins so a multi-hyphen key
+    is not shadowed by a shorter one — and the two custom signets
+    (``custom-signet-short`` / ``custom-signet-long``) stay distinct because each
+    full key is matched against the separator that follows it."""
     for net in sorted(NETWORK_ORDER, key=len, reverse=True):
         if rest == net:
             return net, ""

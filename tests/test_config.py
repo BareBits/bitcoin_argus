@@ -51,9 +51,9 @@ def test_prune_ok_without_indexes():
 def test_custom_signet_valid_without_explicit_challenge():
     # Argus auto-generates a challenge + signing key for a custom signet, so
     # enabling it without an explicit challenge is valid.
-    cfg = validated(make({"custom-signet": {
+    cfg = validated(make({"custom-signet-short": {
         "enabled": True, "miner": {"enabled": False}, "bitcart": BITCART_OFF}}))
-    assert "custom-signet" in [k for k, _ in cfg.enabled_networks()]
+    assert "custom-signet-short" in [k for k, _ in cfg.enabled_networks()]
 
 
 def test_mutinynet_requires_knots_image():
@@ -99,16 +99,16 @@ def test_acme_email_not_required_for_regtest_only():
 @pytest.mark.parametrize("bad", ["xyz", "abc"])  # non-hex / odd-length
 def test_signet_challenge_must_be_hex(bad):
     with pytest.raises(Exception):
-        validated(make({"custom-signet": {
+        validated(make({"custom-signet-short": {
             "enabled": True, "signet_challenge": bad,
             "miner": {"enabled": False}, "bitcart": BITCART_OFF}}))
 
 
 def test_empty_signet_challenge_is_none():
     # An empty placeholder on a disabled network must not error.
-    cfg = validated(make({"custom-signet": {
+    cfg = validated(make({"custom-signet-short": {
         "enabled": False, "signet_challenge": ""}}))
-    assert cfg.networks["custom-signet"].signet_challenge is None
+    assert cfg.networks["custom-signet-short"].signet_challenge is None
 
 
 def test_miner_unsupported_net_is_noop():
@@ -119,11 +119,11 @@ def test_miner_unsupported_net_is_noop():
 
 def test_miner_on_custom_signet_allowed():
     # Argus can sign + mine a custom signet, so the miner is permitted there.
-    cfg = validated(make({"custom-signet": {
+    cfg = validated(make({"custom-signet-short": {
         "enabled": True,
         "miner": {"enabled": True},
         "bitcart": BITCART_OFF}}))
-    assert cfg.networks["custom-signet"].miner.enabled
+    assert cfg.networks["custom-signet-short"].miner.enabled
 
 
 def test_miner_on_non_mineable_network_is_noop():
@@ -142,10 +142,10 @@ def test_ring_defaults_on_for_every_network():
     # Mineable nets self-fund by mining (funding=auto); others fund externally.
     cfg = validated(make({
         "regtest": {"enabled": True, "bitcart": BITCART_OFF},
-        "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+        "custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF},
         "signet": {"enabled": True, "bitcart": BITCART_OFF},
     }))
-    for key in ("regtest", "custom-signet"):
+    for key in ("regtest", "custom-signet-short"):
         net, spec = cfg.networks[key], NETWORK_SPECS[key]
         assert net.lnd_secondary_enabled(spec)
         assert net.lnd_tertiary_enabled(spec)

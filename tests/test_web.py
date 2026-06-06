@@ -96,10 +96,14 @@ def test_web_contact_email_validated(bad):
         ("argus-regtest-cashu", ("regtest", "cashu")),
         # The web wallet gets its own bucket, not folded into "cashu".
         ("argus-regtest-cashu-wallet", ("regtest", "cashu-wallet")),
-        ("argus-custom-signet-bitcoind", ("custom-signet", "bitcoind")),
+        ("argus-custom-signet-short-bitcoind", ("custom-signet-short", "bitcoind")),
+        # The two custom signets share a prefix but must NOT shadow each other.
+        ("argus-custom-signet-long-bitcoind", ("custom-signet-long", "bitcoind")),
+        ("argus-bitcart-custom-signet-long-btclnd-1", ("custom-signet-long", "bitcart")),
         ("argus-bitcart-regtest-btclnd-1", ("regtest", "bitcart")),
         ("argus-regtest_bitcoind_data", ("regtest", "bitcoind")),  # volume form
-        ("argus-custom-signet_fulcrum_1_data", ("custom-signet", "fulcrum")),
+        ("argus-custom-signet-short_fulcrum_1_data", ("custom-signet-short", "fulcrum")),
+        ("argus-custom-signet-long_fulcrum_1_data", ("custom-signet-long", "fulcrum")),
         ("some-unrelated-container", (None, None)),
     ],
 )
@@ -247,7 +251,8 @@ def test_build_sections_reset_info():
         make(
             {
                 "regtest": {"enabled": True, "bitcart": BITCART_OFF},
-                "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
+                "custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF},
+                "custom-signet-long": {"enabled": True, "bitcart": BITCART_OFF},
                 "testnet4": {"enabled": False, "bitcart": BITCART_OFF},
             }
         )
@@ -257,13 +262,20 @@ def test_build_sections_reset_info():
         "usage": {},
         "host": {},
         "reset": {
-            # regtest has a live size -> a countdown; custom-signet has none yet.
+            # regtest has a live size -> a countdown; custom-signet-short has none yet.
             "regtest": {
                 "size_on_disk": 5_000_000_000,
                 "limit_bytes": 30 * 1024**3,
                 "block_interval_seconds": 60,
                 "max_size_gb": 30,
-            }
+            },
+            # The long-lived signet reports against its 300 GB default cap.
+            "custom-signet-long": {
+                "size_on_disk": 10_000_000_000,
+                "limit_bytes": 300 * 1024**3,
+                "block_interval_seconds": 60,
+                "max_size_gb": 300,
+            },
         },
     }
     by_key = {s.key: s for s in build_sections(cfg, port_map, metrics)}
@@ -272,8 +284,15 @@ def test_build_sections_reset_info():
     assert rt is not None and rt.known and rt.eta_text  # "X days, Y hours"
     assert rt.cap_text == "30"
 
-    cs = by_key["custom-signet"].reset
+    cs = by_key["custom-signet-short"].reset
     assert cs is not None and not cs.known and cs.eta_text is None
+    # The short-lived signet's banner still explains its 30 GB policy.
+    assert cs.cap_text == "30"
+
+    # The long-lived signet shows a live countdown against its larger 300 GB cap.
+    cl = by_key["custom-signet-long"].reset
+    assert cl is not None and cl.known and cl.eta_text
+    assert cl.cap_text == "300"
 
     # Disabled / non-mined networks carry no reset banner.
     assert by_key["testnet4"].reset is None
@@ -340,7 +359,7 @@ def test_private_signets_not_linked_to_mempool_space():
     from argus.web.content import MEMPOOL_SPACE_LN_NODE
 
     assert "mutinynet" not in MEMPOOL_SPACE_LN_NODE
-    assert "custom-signet" not in MEMPOOL_SPACE_LN_NODE
+    assert "custom-signet-short" not in MEMPOOL_SPACE_LN_NODE
     assert "regtest" not in MEMPOOL_SPACE_LN_NODE
 
 

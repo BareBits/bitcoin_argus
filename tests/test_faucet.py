@@ -190,7 +190,7 @@ def test_web_compose_has_faucet_service(tmp_path):
     data = make(
         {
             "regtest": {"enabled": True, "bitcart": {"enabled": False}},
-            "custom-signet": {"enabled": True, "bitcart": {"enabled": False}},
+            "custom-signet-short": {"enabled": True, "bitcart": {"enabled": False}},
         }
     )
     compose = _web_compose(tmp_path, data)
@@ -199,12 +199,12 @@ def test_web_compose_has_faucet_service(tmp_path):
     assert "argus.faucet.wsgi:app" in faucet["command"]
     # Reads each faucet network's LND volume read-only for the admin macaroon.
     assert "argus-regtest_lnd_data:/lnd/regtest:ro" in faucet["volumes"]
-    assert "argus-custom-signet_lnd_data:/lnd/custom-signet:ro" in faucet["volumes"]
+    assert "argus-custom-signet-short_lnd_data:/lnd/custom-signet-short:ro" in faucet["volumes"]
     # External volumes are declared so they resolve to the per-net stacks.
     assert compose["volumes"]["argus-regtest_lnd_data"]["external"] is True
     assert "faucet_data" in compose["volumes"]
     # Joins each faucet network plus web (for the socket-proxy donation read).
-    assert set(faucet["networks"]) == {"web", "net-regtest", "net-custom-signet"}
+    assert set(faucet["networks"]) == {"web", "net-regtest", "net-custom-signet-short"}
 
 
 def test_web_compose_no_faucet_when_all_disabled(tmp_path):

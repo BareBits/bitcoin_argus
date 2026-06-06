@@ -1,8 +1,8 @@
 """Explorer links for a faucet payout's transaction and destination address.
 
 Prefers the network's own self-hosted mempool explorer when it runs one;
-otherwise a known public explorer; regtest/custom-signet have no explorer, so
-they get no link and the caller shows the bare txid/address.
+otherwise a known public explorer; regtest and the custom signets have no public
+explorer, so they get no link and the caller shows the bare txid/address.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from __future__ import annotations
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
 
-# Public explorers for networks without a self-hosted mempool. regtest and
-# custom-signet are intentionally absent — there is no public explorer for them.
+# Public explorers for networks without a self-hosted mempool. regtest and the
+# custom signets are intentionally absent — there is no public explorer for them.
 _PUBLIC_EXPLORER: dict[str, str] = {
     "testnet3": "https://mempool.space/testnet",
     "testnet4": "https://mempool.space/testnet4",

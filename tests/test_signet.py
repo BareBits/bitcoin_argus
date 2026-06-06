@@ -35,11 +35,11 @@ def test_generate_signet_key_shape():
 
 
 def test_secrets_signet_pair_created_and_stable(tmp_path):
-    v1 = load_or_create("custom-signet", tmp_path, signet_key=True)
+    v1 = load_or_create("custom-signet-short", tmp_path, signet_key=True)
     assert v1["SIGNET_CHALLENGE"].startswith("5121")
     assert v1["SIGNET_MINER_WIF"]
     # Idempotent: a second load returns the same pair (no rotation).
-    v2 = load_or_create("custom-signet", tmp_path, signet_key=True)
+    v2 = load_or_create("custom-signet-short", tmp_path, signet_key=True)
     assert v2["SIGNET_CHALLENGE"] == v1["SIGNET_CHALLENGE"]
     assert v2["SIGNET_MINER_WIF"] == v1["SIGNET_MINER_WIF"]
 
@@ -49,11 +49,20 @@ def test_secrets_no_signet_key_when_not_requested(tmp_path):
     assert "SIGNET_CHALLENGE" not in v and "SIGNET_MINER_WIF" not in v
 
 
+def test_two_custom_signets_get_independent_keys(tmp_path):
+    """The short- and long-lived signets are separate chains: each keys off its
+    own secrets/<key>/ dir, so their challenges and signing keys must differ."""
+    short = load_or_create("custom-signet-short", tmp_path, signet_key=True)
+    long = load_or_create("custom-signet-long", tmp_path, signet_key=True)
+    assert short["SIGNET_CHALLENGE"] != long["SIGNET_CHALLENGE"]
+    assert short["SIGNET_MINER_WIF"] != long["SIGNET_MINER_WIF"]
+
+
 # --- generation -------------------------------------------------------------
 
 
 def _gen_custom_signet(tmp_path):
-    data = make({"custom-signet": {
+    data = make({"custom-signet-short": {
         "enabled": True,
         "miner": {"enabled": True, "block_interval_seconds": 30},
         "bitcart": BITCART_OFF,
@@ -69,17 +78,17 @@ def test_generate_custom_signet_challenge_matches_secret(tmp_path):
     out, sec = _gen_custom_signet(tmp_path)
     secrets = dict(
         line.split("=", 1)
-        for line in (sec / "custom-signet" / "secrets.env").read_text().splitlines()
+        for line in (sec / "custom-signet-short" / "secrets.env").read_text().splitlines()
         if "=" in line
     )
-    conf = (out / "custom-signet" / "bitcoin" / "bitcoin.conf").read_text()
+    conf = (out / "custom-signet-short" / "bitcoin" / "bitcoin.conf").read_text()
     assert f"signetchallenge={secrets['SIGNET_CHALLENGE']}" in conf
     assert "dnsseed=0" in conf  # isolated custom signet
 
 
 def test_generate_custom_signet_miner(tmp_path):
     out, _ = _gen_custom_signet(tmp_path)
-    csdir = out / "custom-signet"
+    csdir = out / "custom-signet-short"
     # Self-contained build context for the signet miner image.
     for f in ("Dockerfile", "miner", "mine-signet.sh"):
         assert (csdir / "miner" / f).is_file()
