@@ -499,6 +499,7 @@ addr() { _ip=$(getent hosts "$1" 2>/dev/null | awk '{print $1; exit}'); \
          echo "${_ip:-$1}:${P2P}"; }
 conf() { eval "\\$$1 walletbalance" | grep -o '"confirmed_balance": *"[0-9]*"' \
         | grep -oE '[0-9]+' | head -1; }
+synced() { eval "\\$$1 getinfo" | grep -q '"synced_to_chain": true'; }
 active() { eval "\\$$1 listchannels" | grep -c '"active": true' || true; }
 
 if [ "${FUNDING}" = "auto" ]; then
@@ -519,6 +520,15 @@ echo "[lnd-ring] waiting for confirmed on-chain funds (>= ${CHAN_SAT} sat) on al
 until [ "$(conf L1)" -ge "${CHAN_SAT}" ] 2>/dev/null; do sleep 10; done
 until [ "$(conf L2)" -ge "${CHAN_SAT}" ] 2>/dev/null; do sleep 10; done
 until [ "$(conf L3)" -ge "${CHAN_SAT}" ] 2>/dev/null; do sleep 10; done
+
+# openchannel is rejected ("server is still in the process of starting") until a
+# node has finished syncing its wallet to the chain — wait for that explicitly so
+# a slow sync doesn't turn into a cryptic crash-loop.
+echo "[lnd-ring] waiting for all nodes to finish syncing to chain..."
+until synced L1 && synced L2 && synced L3; do
+  echo "[lnd-ring]   syncing... (waiting for synced_to_chain on all nodes)"
+  sleep 5
+done
 
 # Each node opens ONE single-funded channel to the next hop. A per-edge marker
 # makes this idempotent (a peer-presence check can't, since both ends then list a
@@ -550,21 +560,31 @@ until [ "$(active L1)" -ge 2 ] && [ "$(active L2)" -ge 2 ] \
   sleep 10
 done
 
-# Initial rebalance: a single circular self-payment of half a channel around the
-# ring (L1->L2->L3->L1) moves every channel from ~100/0 to ~50/50. At this point
-# only the forward direction is routable (the reverse needs outbound the nodes
-# don't have yet), so the pathfinder has just one choice — no hints needed.
+# Initial rebalance: one circular self-payment of half a channel around the ring
+# (node1 -> node2 -> node3 -> node1) moves EVERY channel from ~100/0 to ~50/50 in
+# a single shot. We pin the last hop to node3 so it comes back in via the node1
+# <- node3 channel — that fixes the circular direction deterministically (no
+# --outgoing_chan_id: an unannounced channel's chan_id isn't a usable scid).
+# Channels are active but their edges still need to propagate into every node's
+# routing graph, so retry while that settles.
 HALF=$(( CHAN_SAT / 2 ))
-echo "[lnd-ring] initial circular rebalance of ${HALF} sat around the ring"
-PR=$($L1 addinvoice --amt=${HALF} 2>/dev/null \
-     | grep -o '"payment_request": *"[^"]*"' | cut -d'"' -f4)
-if [ -n "$PR" ] && $L1 payinvoice --force --allow_self_payment \
-     --fee_limit=${MAX_FEE_SAT} "$PR"; then
-  touch "${STATE}/rebalanced"
-  echo "[lnd-ring] initial rebalance complete — every channel ~50/50"
-else
-  echo "[lnd-ring] initial rebalance incomplete; the rebalancer will balance the ring"
-fi
+echo "[lnd-ring] initial circular rebalance of ${HALF} sat (node1->node2->node3->node1)"
+i=0
+while [ $i -lt 12 ]; do
+  PR=$($L1 addinvoice --amt=${HALF} 2>/dev/null \
+       | grep -o '"payment_request": *"[^"]*"' | cut -d'"' -f4)
+  if [ -n "$PR" ] && $L1 payinvoice --force --allow_self_payment \
+       --last_hop="$P3" --fee_limit=${MAX_FEE_SAT} "$PR" 2>&1 | grep -q SUCCEEDED; then
+    touch "${STATE}/rebalanced"
+    echo "[lnd-ring] initial rebalance complete — every channel ~50/50"
+    break
+  fi
+  i=$((i+1))
+  echo "[lnd-ring]   route not ready yet (graph still propagating); retry ${i}/12"
+  sleep 15
+done
+[ -f "${STATE}/rebalanced" ] \
+  || echo "[lnd-ring] initial rebalance incomplete; the rebalancer will balance the ring"
 
 echo "[lnd-ring] ring setup complete"
 """
@@ -620,9 +640,14 @@ rebalance_node() {  # $1 svc  $2 lnddir
        addinvoice --amt=${amt} 2>/dev/null \
        | grep -o '"payment_request": *"[^"]*"' | cut -d'"' -f4)
   [ -n "$PR" ] || return 0
+  # Route the self-payment so its LAST hop comes in via the depleted channel's
+  # peer (${LO_PK}); in a ring that uniquely fixes the circular direction, and the
+  # over-full channel is auto-selected as the outgoing one. We deliberately do NOT
+  # pass --outgoing_chan_id: an unannounced channel's listchannels chan_id is the
+  # funding-based id, not the uint64 short-channel-id that flag requires.
   if lncli --network=${NET} --rpcserver="${SVC}:${GRPC}" --lnddir="${DIR}" \
-       payinvoice --force --allow_self_payment --outgoing_chan_id="${HI_ID}" \
-       --last_hop="${LO_PK}" --fee_limit="${MAX_FEE_SAT}" "$PR" >/dev/null 2>&1; then
+       payinvoice --force --allow_self_payment \
+       --last_hop="${LO_PK}" --fee_limit="${MAX_FEE_SAT}" "$PR" 2>&1 | grep -q SUCCEEDED; then
     echo "[rebal] ${SVC}: rebalanced ${amt} sat"
   else
     echo "[rebal] ${SVC}: attempt failed (retry next cycle)"

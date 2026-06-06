@@ -250,7 +250,10 @@ class LndRebalancerCfg(_Base):
     interval_seconds: int = Field(default=300, ge=30)
     low_ratio: float = Field(default=0.35, gt=0.0, lt=1.0)
     high_ratio: float = Field(default=0.65, gt=0.0, lt=1.0)
-    max_fee_sat: int = Field(default=1000, ge=0)
+    # Circular-rebalance fees are paid between the operator's OWN ring nodes, so a
+    # generous cap just lets rebalances succeed; it isn't a real cost. Sized to
+    # clear a half-channel move at LND's default ~1 ppm over two hops.
+    max_fee_sat: int = Field(default=5000, ge=0)
 
     @model_validator(mode="after")
     def _check_band(self) -> "LndRebalancerCfg":
