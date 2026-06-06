@@ -266,6 +266,36 @@ MEMPOOL_SPACE_LN_NODE: dict[str, str] = {
 }
 
 
+# --- sub-tool versions + source repos ----------------------------------------
+
+# GitHub source repositories for each sub-tool, used to link the version shown in
+# the services table. Our own components (faucet, regtest/signet miner) point at
+# the Argus repo; the Bitcoin Core node links upstream, except mutinynet, whose
+# signetblocktime node is a fork. ``electrum`` / ``lnd`` here are the *client*
+# tools linked from the "attach your tools" recipes.
+SUBTOOL_REPO: dict[str, str] = {
+    "bitcoind": "https://github.com/bitcoin/bitcoin",
+    "bitcoind_signet_fork": "https://github.com/MutinyWallet/mutiny-net",
+    "lnd": "https://github.com/lightningnetwork/lnd",
+    "fulcrum": "https://github.com/cculianu/Fulcrum",
+    "cashu": "https://github.com/cashubtc/nutshell",
+    "cashu_wallet": "https://github.com/cashubtc/cashu.me",
+    "mempool": "https://github.com/mempool/mempool",
+    "bitcart": "https://github.com/BareBits/bitcart",
+    "electrum": "https://github.com/spesmilo/electrum",
+    "argus": "https://github.com/BareBits/bitcoin_argus",
+}
+
+
+def image_version(image: str) -> str:
+    """The tag of a docker image reference (``repo/name:tag`` -> ``tag``).
+
+    Splits on the final path segment first so a registry ``host:port/...`` prefix
+    can't be mistaken for the tag. Returns ``""`` when the reference has no tag."""
+    name = image.rsplit("/", 1)[-1]
+    return name.split(":", 1)[1] if ":" in name else ""
+
+
 # Electrum's network selection flag per chain (testnet4 has no dedicated flag yet).
 _ELECTRUM_FLAG: dict[str, str | None] = {
     "regtest": "--regtest",
@@ -286,74 +316,235 @@ class AttachCommand:
     command_onion: str = ""
 
 
-def attach_commands(
+# --- OS-specific "attach your tools" recipes ---------------------------------
+
+# The three operating systems the visitor attach instructions are tabbed by, in
+# display order. Linux is the default tab (the typical Bitcoin dev environment).
+ATTACH_OS_ORDER: tuple[str, ...] = ("linux", "macos", "windows")
+ATTACH_OS_LABELS: dict[str, str] = {
+    "linux": "Linux",
+    "macos": "macOS",
+    "windows": "Windows",
+}
+ATTACH_DEFAULT_OS: str = "linux"
+
+# Default binary locations per OS, verified against each project's official
+# install docs (June 2026). Where a tool ships only as a PATH binary — lncli on
+# every OS (LND has no installer), and Electrum/bitcoind on Linux (pip/AppImage,
+# tarball) — the bare command name is used. The Electrum Windows installer names
+# the exe ``electrum-<version>.exe`` under this folder; ``electrum.exe`` stands in
+# for it (see the recipe note).
+_ELECTRUM_BIN: dict[str, str] = {
+    "linux": "electrum",
+    "macos": "/Applications/Electrum.app/Contents/MacOS/run_electrum",
+    "windows": r'"C:\Program Files (x86)\Electrum\electrum.exe"',
+}
+_BITCOIND_BIN: dict[str, str] = {
+    "linux": "bitcoind",
+    "macos": "/Applications/Bitcoin-Qt.app/Contents/MacOS/bitcoind",
+    "windows": r'"C:\Program Files\Bitcoin\daemon\bitcoind.exe"',
+}
+_LNCLI_BIN: dict[str, str] = {
+    "linux": "lncli",
+    "macos": "lncli",
+    "windows": "lncli.exe",
+}
+
+
+@dataclass(frozen=True)
+class AttachVariant:
+    """One operating system's form of an attach recipe. The recipe is the same on
+    every OS; only the binary's default path/name changes. ``command`` may span
+    several lines (e.g. one connect line per LND node, each node's 🧅 onion variant
+    on the line below its clearnet line)."""
+
+    os: str  # one of ATTACH_OS_ORDER
+    command: str
+
+
+@dataclass(frozen=True)
+class AttachTool:
+    """A collapsible tool group in "Attach your tools": one command per OS plus a
+    shared note. ``key`` is a stable id used for element ids/CSS."""
+
+    key: str  # "electrum" | "bitcoind" | "lncli"
+    title: str
+    repo_url: str
+    variants: tuple[AttachVariant, ...]
+    note: str = ""
+
+
+def attach_tool_groups(
     net_key: str,
     hostname: str,
     ports: dict[str, int],
-    p2p_public: bool = True,
-) -> list[AttachCommand]:
-    """Suggested CLI recipes for connecting to this network.
+    p2p_public: bool,
+    signet_challenge: str | None,
+    lnd_uris: list[tuple[str, str, int]],
+    onion_hostname: str | None = None,
+) -> list[AttachTool]:
+    """Visitor "attach your tools" recipes, grouped by tool with one command per
+    OS (the recipe is identical; only the default binary path changes).
 
-    Visitor recipes use the public ports (e.g. Electrum -> the public Fulcrum
-    server). The Bitcoin Core RPC recipe is **operator-only**: the node's RPC is
-    bound to the server's localhost and is reachable only by someone with shell
-    access to the host — it is shown for completeness, clearly marked, not as
-    something a visitor can use.
+    Up to three groups, each emitted only when it applies to this network:
 
-    On regtest, when the node's P2P port is public, a visitor *can* mine: they run
-    their own regtest node peered with ours and call ``generatetoaddress`` locally
-    (their blocks propagate over P2P). ``p2p_public`` gates that recipe.
+    * **Electrum** — point a wallet at the public Fulcrum server (when one runs).
+    * **Bitcoin Core** — peer your own node over P2P, gated on a public P2P port.
+      Custom signets get the ``-signetchallenge`` a vanilla node needs to accept
+      their blocks; on regtest the note adds the considerate mining follow-up.
+    * **Lightning (lncli)** — connect / open a channel to the public LND node(s),
+      one connect line per known node (argus1 first), with onion variants on Tor.
+
+    ``signet_challenge`` is the custom-signet challenge (None for regtest and the
+    public networks). ``lnd_uris`` is ``(label, pubkey, p2p_port)`` per node.
     """
     spec = NETWORK_SPECS[net_key]
     chain = spec.chain
-    cmds: list[AttachCommand] = []
+    tools: list[AttachTool] = []
 
-    # Visitor mining recipe — only regtest (signet needs the operator's signing
-    # key) and only when the P2P port is actually exposed.
-    if net_key == "regtest" and p2p_public:
-        p2p = ports["bitcoind_p2p"]
-        cmds.append(
-            AttachCommand(
-                label="Mine regtest blocks (attach your own node)",
-                command=(
-                    f"# Peer your own regtest node with ours, then mine to your wallet:\n"
-                    f"bitcoind -regtest -addnode={hostname}:{p2p} -daemon\n"
-                    f"bitcoin-cli -regtest generatetoaddress 1 "
-                    f"$(bitcoin-cli -regtest getnewaddress)"
-                ),
-                note=(
-                    "Please be considerate: this is a shared chain — mine only the "
-                    "blocks you need. Over-mining or deep reorgs disrupt others "
-                    "(handy for robustness testing, but don't overdo it). This port "
-                    "opens automatically once the node's two Lightning channels are "
-                    "set up, so it may be briefly closed right after a fresh deploy."
-                ),
-                audience="visitor",
-            )
-        )
-
-    # First Fulcrum instance, if any, exposes a public Electrum TCP port — this
-    # is the recipe a visitor actually uses.
+    # --- Electrum -------------------------------------------------------------
     electrum_port = ports.get("fulcrum_0_electrum_tcp")
     if electrum_port is not None:
         flag = _ELECTRUM_FLAG.get(chain)
         flag_part = f" {flag}" if flag else ""
-        note = (
-            ""
-            if flag
-            else "Electrum has no dedicated testnet4 flag yet; use a testnet4-aware build."
+        note = "':t' selects plaintext TCP (a TLS port lands later)."
+        if not flag:
+            note = (
+                "Electrum has no dedicated testnet4 flag yet; use a testnet4-aware "
+                "build. " + note
+            )
+        note += (
+            " On Windows the installer names the exe electrum-<version>.exe in that "
+            "folder."
         )
-        cmds.append(
-            AttachCommand(
-                label="Electrum wallet (via the public Fulcrum server)",
+        variants = tuple(
+            AttachVariant(
+                os=os_key,
                 command=(
-                    f"electrum{flag_part} --oneserver "
+                    f"{_ELECTRUM_BIN[os_key]}{flag_part} --oneserver "
                     f"--server {hostname}:{electrum_port}:t"
                 ),
-                note=note or "':t' selects plaintext TCP (TLS port lands later).",
-                audience="visitor",
+            )
+            for os_key in ATTACH_OS_ORDER
+        )
+        tools.append(
+            AttachTool(
+                key="electrum",
+                title="Electrum",
+                repo_url=SUBTOOL_REPO["electrum"],
+                variants=variants,
+                note=note,
             )
         )
+
+    # --- Bitcoin Core ---------------------------------------------------------
+    # Peer your own node with ours over P2P. Only meaningful when the P2P port is
+    # public. A custom signet (is_signet but not the public signet) additionally
+    # needs its challenge to accept blocks: Mutinynet's is a public constant, but
+    # an operator-generated signet's challenge lives in the node's secret store —
+    # not in the dashboard's config — so there we emit a placeholder + note.
+    if p2p_public and "bitcoind_p2p" in ports:
+        p2p = ports["bitcoind_p2p"]
+        needs_challenge = spec.is_signet and net_key != "signet"
+        placeholder = needs_challenge and not signet_challenge
+        challenge_part = ""
+        if needs_challenge:
+            challenge_part = f" -signetchallenge={signet_challenge or '<signet-challenge>'}"
+        variants = tuple(
+            AttachVariant(
+                os=os_key,
+                command=(
+                    f"{_BITCOIND_BIN[os_key]} -chain={chain}{challenge_part} "
+                    f"-addnode={hostname}:{p2p} -daemon"
+                ),
+            )
+            for os_key in ATTACH_OS_ORDER
+        )
+        if net_key == "regtest":
+            note = (
+                "Starts your own regtest node and peers it with ours so it syncs "
+                "this chain. Once peered, mine to your own wallet:\n"
+                "  bitcoin-cli -regtest generatetoaddress 1 "
+                "$(bitcoin-cli -regtest getnewaddress)\n"
+                "Please be considerate — this is a shared chain, so mine only the "
+                "blocks you need; over-mining or deep reorgs disrupt others (handy "
+                "for robustness testing, but don't overdo it). The P2P port opens "
+                "automatically once the node's two Lightning channels are set up, "
+                "so it may be briefly closed right after a fresh deploy."
+            )
+        else:
+            note = (
+                "Starts your own Bitcoin Core node and peers it with ours over P2P "
+                "so it syncs this chain."
+            )
+            if placeholder:
+                note += (
+                    " This is a custom signet — replace <signet-challenge> with this "
+                    "network's signetchallenge (it's in the node's bitcoin.conf; ask "
+                    "the operator) so your node accepts its blocks."
+                )
+            elif needs_challenge:
+                note += (
+                    " The -signetchallenge is what makes your node accept this "
+                    "custom signet's blocks."
+                )
+        tools.append(
+            AttachTool(
+                key="bitcoind",
+                title="Bitcoin Core",
+                repo_url=SUBTOOL_REPO["bitcoind"],
+                variants=variants,
+                note=note,
+            )
+        )
+
+    # --- Lightning (lncli) ----------------------------------------------------
+    # One connect line per node (argus1 first). When Tor is on, each node's onion
+    # connect line follows its clearnet line, tagged with 🧅 — for every node, not
+    # just the first, so all of argus1/2/3 carry the icon.
+    if lnd_uris:
+        multi = len(lnd_uris) > 1
+        ln_variants: list[AttachVariant] = []
+        for os_key in ATTACH_OS_ORDER:
+            lncli = _LNCLI_BIN[os_key]
+            lines: list[str] = []
+            for label, pk, p2p in lnd_uris:
+                if multi:
+                    lines.append(f"# {label}")
+                lines.append(f"{lncli} connect {pk}@{hostname}:{p2p}")
+                if onion_hostname:
+                    lines.append(f"🧅 {lncli} connect {pk}@{onion_hostname}:{p2p}")
+            ln_variants.append(AttachVariant(os=os_key, command="\n".join(lines)))
+        tools.append(
+            AttachTool(
+                key="lncli",
+                title="Lightning (lncli)",
+                repo_url=SUBTOOL_REPO["lnd"],
+                variants=tuple(ln_variants),
+                note=(
+                    "The node's public connection URI is pubkey@host:port. LND ships "
+                    "as release binaries with no installer — put lncli on your PATH."
+                ),
+            )
+        )
+
+    return tools
+
+
+def attach_commands(
+    net_key: str,
+    ports: dict[str, int],
+) -> list[AttachCommand]:
+    """Operator-only CLI recipes for this network.
+
+    Just the Bitcoin Core RPC recipe: the node's RPC is bound to the server's
+    localhost and reachable only with shell access to the host — shown for
+    completeness, clearly marked, not something a visitor can use. Visitor recipes
+    (Electrum, peer-your-own-node, lncli connect) live in :func:`attach_tool_groups`.
+    """
+    spec = NETWORK_SPECS[net_key]
+    chain = spec.chain
+    cmds: list[AttachCommand] = []
 
     rpc_port = ports.get("bitcoind_rpc")
     if rpc_port is not None:

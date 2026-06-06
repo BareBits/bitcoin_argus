@@ -50,6 +50,49 @@
   {% for s in sections %}
   #nettab-{{ s.key }}:checked ~ .net-panels #netpanel-{{ s.key }} { display: block; }
   {% endfor %}
+
+  /* "Attach your tools" — boxed as a single lighter panel so the OS selector's
+     scope (it governs every tool inside) reads at a glance. The fill is per-theme
+     (--attach-bg); the border/radius/padding enclose it on every theme. */
+  .attach {
+    margin: 1.3rem 0 0.6rem;
+    padding: 0.85rem 1.05rem 1rem;
+    background: var(--attach-bg, rgba(127, 127, 127, 0.06));
+    border: 1px solid var(--tab-border, rgba(127, 127, 127, 0.3));
+    border-radius: 0.5rem;
+  }
+  .attach > h4 { margin-top: 0.15rem; }
+
+  /* Per-network OS tabs (CSS-only radios, same approach as the network tabs) plus
+     per-tool collapsibles. Each tool lists one command block per OS; only the
+     block for the checked OS radio is shown. */
+  .attach .os-tab-radio {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .attach .os-tab {
+    display: inline-block; cursor: pointer; user-select: none;
+    padding: 0.25rem 0.7rem; margin: 0 0.3rem 0.5rem 0; font-size: 0.85rem;
+    background: var(--tab-bg, #e9ecef); color: var(--tab-fg, #212529);
+    border: 1px solid var(--tab-border, #ccc);
+  }
+  .attach .os-tab:hover { background: var(--tab-hover-bg, #dee2e6); }
+  .attach .os-tab-radio:focus-visible + .os-tab {
+    outline: 2px solid var(--tab-active-border, #0d6efd); outline-offset: 2px;
+  }
+  .attach .os-tab-radio:checked + .os-tab {
+    background: var(--tab-active-bg, #0d6efd); color: var(--tab-active-fg, #fff);
+    border-color: var(--tab-active-border, #0d6efd); font-weight: 600;
+  }
+  .attach-tool { margin: 0.4rem 0; }
+  .attach-tool > summary { cursor: pointer; font-weight: 600; }
+  .attach-repo { margin-left: 0.4rem; text-decoration: none; opacity: 0.7; }
+  .attach-repo:hover { opacity: 1; }
+  .attach-os { display: none; }
+  .svc-version { white-space: nowrap; }
+  {% for s in sections %}{% for os in attach_os_order %}
+  #os-{{ s.key }}-{{ os }}:checked ~ .attach-tools .attach-os.os-{{ os }} { display: block; }
+  {% endfor %}{% endfor %}
 </style>
 {% endblock %}
 
@@ -234,7 +277,7 @@
     <table class="svc-table">
       <thead>
         <tr>
-          <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>RAM</th><th>Disk</th>
+          <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>RAM</th><th>Disk</th><th>Version</th>
         </tr>
       </thead>
       <tbody>
@@ -257,28 +300,46 @@
           </td>
           <td class="num">{{ svc.ram|humanbytes }}</td>
           <td class="num">{{ svc.disk|humanbytes }}</td>
+          <td class="svc-version">
+            {% if svc.version %}<a href="{{ svc.repo_url }}" target="_blank" rel="noopener">{{ svc.version }}</a>{% else %}—{% endif %}
+          </td>
         </tr>
         {% endfor %}
         <tr class="totals">
           <td colspan="4">Section total</td>
           <td class="num">{{ s.ram_total|humanbytes }}</td>
           <td class="num">{{ s.disk_total|humanbytes }}</td>
+          <td></td>
         </tr>
       </tbody>
     </table>
 
-    {% set vis = s.attach|selectattr('audience', 'equalto', 'visitor')|list %}
-    {% if vis %}
+    {% if s.attach_tools %}
     <div class="attach">
       <h4>Attach your tools</h4>
-      {% for a in vis %}
-      <div class="attach-item attach-visitor">
-        <div class="attach-label">{{ a.label }}</div>
-        <pre class="cmd">{{ a.command }}{% if a.command_onion %}
-🧅 {{ a.command_onion }}{% endif %}</pre>
-        {% if a.note %}<div class="attach-note">{{ a.note }}</div>{% endif %}
-      </div>
+      {# Per-network OS selector (CSS-only radios). Each tool's three command
+         blocks are revealed by the matching .os-<os> rule in the <style> block. #}
+      {% for os in attach_os_order %}
+      <input type="radio" name="os-{{ s.key }}" id="os-{{ s.key }}-{{ os }}"
+             class="os-tab-radio"{% if os == attach_default_os %} checked{% endif %}>
+      <label class="os-tab" for="os-{{ s.key }}-{{ os }}">{{ attach_os_labels[os] }}</label>
       {% endfor %}
+      <div class="attach-tools">
+        {% for tool in s.attach_tools %}
+        <details class="attach-tool"{% if loop.first %} open{% endif %}>
+          <summary><span class="caret"></span>{{ tool.title }}
+            <a class="attach-repo" href="{{ tool.repo_url }}" target="_blank"
+               rel="noopener" aria-label="{{ tool.title }} on GitHub">↗</a>
+          </summary>
+          {% for v in tool.variants %}
+          <div class="attach-os os-{{ v.os }}">
+            <pre class="cmd">{{ v.command }}</pre>
+          </div>
+          {% endfor %}
+          {% if tool.note %}<div class="attach-note">{{ tool.note }}</div>{% endif %}
+        </details>
+        {% endfor %}
+      </div>
     </div>
     {% endif %}
 

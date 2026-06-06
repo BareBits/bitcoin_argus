@@ -10,7 +10,12 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from ..config import ArgusConfig, load_config
 from ..ports import allocate
 from . import cache, metrics
-from .content import when_to_use_columns
+from .content import (
+    ATTACH_DEFAULT_OS,
+    ATTACH_OS_LABELS,
+    ATTACH_OS_ORDER,
+    when_to_use_columns,
+)
 from .inventory import build_donations, build_sections
 from .lnurl import LnurlError, LnurlService
 
@@ -128,6 +133,9 @@ def create_app(config_path: str | None = None, cache_db: str | None = None) -> F
             donations_by_key={d.key: d for d in donations},
             default_tab=default_tab,
             when_columns=when_to_use_columns(net_keys),
+            attach_os_order=ATTACH_OS_ORDER,
+            attach_os_labels=ATTACH_OS_LABELS,
+            attach_default_os=ATTACH_DEFAULT_OS,
             host=payload.get("host", {}),
             metrics_errors=payload.get("errors", []),
             cache_age=int(age),

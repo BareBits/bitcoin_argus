@@ -17,6 +17,8 @@
   --tab-active-bg: #fbd000;
   --tab-active-fg: #0b0b0b;
   --tab-active-border: #0b0b0b;
+  /* "Attach your tools" panel fill — white, lighter than the cream paper. */
+  --attach-bg: #ffffff;
 }
 
 * { box-sizing: border-box; }
