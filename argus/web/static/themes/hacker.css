@@ -23,6 +23,8 @@
   --tab-active-bg: #3f6cff;
   --tab-active-fg: #02030c;
   --tab-active-border: #cfdcff;
+  /* "Attach your tools" panel fill — a lighter blue lift over the dark panel. */
+  --attach-bg: rgba(90, 134, 255, 0.10);
 }
 
 * { box-sizing: border-box; }

@@ -10,6 +10,7 @@ from urllib.parse import quote
 import pytest
 import yaml
 
+from argus import __version__ as ARGUS_VERSION
 from argus.config import load_config
 from argus.firewall import render_firewall
 from argus.ports import allocate
@@ -268,15 +269,87 @@ def test_build_sections_enabled_and_disabled():
     miner = next(s for s in rt.services if s.bucket == "miner")
     assert miner.audience == "Operator only"  # block production is operator-controlled
 
-    # Attach recipes carry an audience; the Bitcoin Core RPC one is operator-only
-    # and must not suggest a visitor SSH tunnel.
-    auds = {a.audience for a in rt.attach}
-    assert auds == {"visitor", "operator"}
+    # section.attach now holds only the operator Bitcoin Core RPC recipe; the
+    # visitor recipes moved to section.attach_tools (grouped, per-OS).
+    assert {a.audience for a in rt.attach} == {"operator"}
     rpc = next(a for a in rt.attach if a.audience == "operator")
     assert "Operator-only" in rpc.note and "ssh -" not in rpc.command.lower()
+    # Visitor tool groups: Electrum (public Fulcrum) and Bitcoin Core (public P2P)
+    # are present; Lightning appears only once a node pubkey is known (not here).
+    tool_keys = {t.key for t in rt.attach_tools}
+    assert {"electrum", "bitcoind"} <= tool_keys and "lncli" not in tool_keys
+    # Every tool group carries one command per OS, in the canonical order.
+    for t in rt.attach_tools:
+        assert [v.os for v in t.variants] == ["linux", "macos", "windows"]
 
     t4 = by_key["testnet4"]
     assert not t4.enabled and not t4.services  # disabled: section but no table
+
+
+def test_faucet_listed_first_with_version():
+    # The faucet, when enabled, is the first sub-tool in every network's table and
+    # carries the Argus version + repo.
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    section = next(
+        s for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    assert cfg.networks["regtest"].faucet.enabled
+    assert section.services[0].bucket == "faucet"
+    faucet = section.services[0]
+    assert faucet.version == ARGUS_VERSION
+    assert faucet.repo_url.endswith("BareBits/bitcoin_argus")
+
+
+def test_service_versions_from_image_tags():
+    # Each sub-tool's version comes from its pinned image tag (or git ref / branch)
+    # and links to the right upstream repo.
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    section = next(
+        s for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    by_bucket = {s.bucket: s for s in section.services}
+    bitcoind = by_bucket["bitcoind"]
+    assert bitcoind.version == "v28.0"
+    assert bitcoind.repo_url == "https://github.com/bitcoin/bitcoin"
+    assert by_bucket["lnd"].version == "0.19.3-beta"
+    assert by_bucket["lnd"].repo_url.endswith("lightningnetwork/lnd")
+    assert by_bucket["cashu"].version == "0.20.1"
+    # The cashu.me wallet pins a git ref; the column shows its short SHA.
+    assert by_bucket["cashu-wallet"].version == cfg.global_.cashu_wallet_ref[:7]
+    fulcrum = next(s for s in section.services if s.bucket.startswith("fulcrum"))
+    assert fulcrum.version == "v2.1.1"
+
+
+def test_mutinynet_bitcoind_links_signet_fork():
+    # Mutinynet runs a signetblocktime fork, so its Bitcoin Core row links to the
+    # fork repo (not upstream) and shows the knots image's tag.
+    cfg = validated(make(
+        {"mutinynet": {"enabled": True, "bitcart": BITCART_OFF}},
+        bitcoind_knots_image="example/bitcoind-signet:v27.1",
+    ))
+    section = next(
+        s for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+        if s.key == "mutinynet"
+    )
+    bitcoind = next(s for s in section.services if s.bucket == "bitcoind")
+    assert bitcoind.version == "v27.1"
+    assert bitcoind.repo_url.endswith("MutinyWallet/mutiny-net")
+
+
+def test_custom_signet_attach_uses_challenge_placeholder():
+    # A custom signet needs its challenge to peer; it isn't in the dashboard's
+    # config (it's auto-generated into secrets), so the recipe shows a placeholder.
+    cfg = validated(make({"custom-signet-short": {"enabled": True, "bitcart": BITCART_OFF}}))
+    section = next(
+        s for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+        if s.key == "custom-signet-short"
+    )
+    core = next(t for t in section.attach_tools if t.key == "bitcoind")
+    linux = next(v for v in core.variants if v.os == "linux")
+    assert "-signetchallenge=<signet-challenge>" in linux.command
+    assert "<signet-challenge>" in core.note and "ask the operator" in core.note
 
 
 def test_build_sections_reset_info():
@@ -342,9 +415,11 @@ def test_lnd_pubkey_uri_and_mempool_link():
     lnd = next(s for s in section.services if s.bucket == "lnd")
     assert any(f"/lightning/node/{pk}" in link.url for link in lnd.links)
 
-    # The connection URI (pubkey@host:p2p) is offered in the attach section.
-    uri_cmd = next(a for a in section.attach if "lncli connect" in a.command)
-    assert f"{pk}@{cfg.global_.hostname}:{port_map['regtest']['lnd_p2p']}" in uri_cmd.command
+    # The connection URI (pubkey@host:p2p) is offered in the Lightning tool group.
+    lncli = next(t for t in section.attach_tools if t.key == "lncli")
+    linux = next(v for v in lncli.variants if v.os == "linux")
+    assert "lncli connect" in linux.command
+    assert f"{pk}@{cfg.global_.hostname}:{port_map['regtest']['lnd_p2p']}" in linux.command
 
 
 def test_lnd_link_falls_back_to_mempool_space():
@@ -410,11 +485,11 @@ def test_second_lnd_node_rows_and_uris():
     assert any(p.label == "P2P" and p.port == port_map["regtest"]["lnd2_p2p"]
                for p in node2.ports)
 
-    # Both connect URIs are offered, argus1 first.
-    connects = [a for a in section.attach if "lncli connect" in a.command]
-    assert any(pk1 in a.command for a in connects)
-    assert any(pk2 in a.command for a in connects)
-    assert pk1 in connects[0].command  # argus1 at the top
+    # Both connect URIs are offered in one Lightning group, argus1 first.
+    lncli = next(t for t in section.attach_tools if t.key == "lncli")
+    cmd = next(v for v in lncli.variants if v.os == "linux").command
+    assert pk1 in cmd and pk2 in cmd
+    assert cmd.index(pk1) < cmd.index(pk2)  # argus1 listed first
 
 
 def test_third_lnd_node_row_and_uri():
@@ -427,8 +502,8 @@ def test_third_lnd_node_row_and_uri():
     section = next(s for s in build_sections(cfg, port_map, metrics) if s.key == "regtest")
     buckets = [s.bucket for s in section.services]
     assert "lnd3" in buckets
-    connects = [a for a in section.attach if "lncli connect" in a.command]
-    assert any(pk3 in a.command for a in connects)
+    lncli = next(t for t in section.attach_tools if t.key == "lncli")
+    assert any(pk3 in v.command for v in lncli.variants)
 
 
 def test_liquidity_panel_from_metrics():
@@ -478,19 +553,22 @@ def test_regtest_mining_recipe_present_and_gated():
         s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}})
         if s.key == "regtest"
     )
-    mine = next(a for a in section.attach if "generatetoaddress" in a.command)
-    assert mine.audience == "visitor"
-    assert f":{port_map['regtest']['bitcoind_p2p']}" in mine.command
-    assert "mine only the blocks you need" in mine.note.lower()
+    # The Bitcoin Core tool peers your own node over the public P2P port; on
+    # regtest its note carries the considerate mining follow-up.
+    core = next(t for t in section.attach_tools if t.key == "bitcoind")
+    linux = next(v for v in core.variants if v.os == "linux")
+    assert f"-addnode={cfg.global_.hostname}:{port_map['regtest']['bitcoind_p2p']}" in linux.command
+    assert "generatetoaddress" in core.note
+    assert "mine only the blocks you need" in core.note.lower()
 
-    # With the P2P port loopback-only, the mining recipe is withheld.
+    # With the P2P port loopback-only, the Bitcoin Core tool is withheld entirely.
     cfg2 = validated(make({"regtest": {
         "enabled": True, "bitcart": BITCART_OFF, "bitcoind": {"p2p_public": False}}}))
     section2 = next(
         s for s in build_sections(cfg2, allocate(cfg2), {"usage": {}, "host": {}})
         if s.key == "regtest"
     )
-    assert not any("generatetoaddress" in a.command for a in section2.attach)
+    assert not any(t.key == "bitcoind" for t in section2.attach_tools)
 
 
 def test_no_lnd_link_or_uri_without_pubkey():
@@ -502,7 +580,7 @@ def test_no_lnd_link_or_uri_without_pubkey():
     )
     lnd = next(s for s in section.services if s.bucket == "lnd")
     assert lnd.links == []
-    assert not any("lncli connect" in a.command for a in section.attach)
+    assert not any(t.key == "lncli" for t in section.attach_tools)
 
 
 # --- donations --------------------------------------------------------------
@@ -653,15 +731,43 @@ def test_onion_lnd_connect_line_present():
             cfg, port_map, {"usage": {}, "host": {}, "lnd": {"regtest": pk}}, onion)
         if s.key == "regtest"
     )
-    # Clearnet connect and its onion variant now live in ONE attach item:
-    # the clearnet URI in .command, the onion URI in .command_onion.
+    # Clearnet connect and its onion variant live in ONE per-OS command block:
+    # the clearnet line, then the onion line tagged with 🧅.
     p2p = port_map["regtest"]["lnd_p2p"]
-    lnd = next(
-        a for a in section.attach
-        if "lncli connect" in a.command and f":{p2p}" in a.command
+    lncli = next(t for t in section.attach_tools if t.key == "lncli")
+    v = next(v for v in lncli.variants if v.os == "linux")
+    assert f"lncli connect {pk}@{cfg.global_.hostname}:{p2p}" in v.command  # clearnet
+    assert f"🧅 lncli connect {pk}@{onion}:{p2p}" in v.command  # onion line, with icon
+
+
+def test_onion_icon_on_every_lnd_node():
+    # With Tor on and the full three-node ring, EACH node's onion connect line is
+    # tagged with 🧅 — not just argus1.
+    cfg = validated(make(
+        {"regtest": {"enabled": True, "bitcart": BITCART_OFF}},
+        tor={"enabled": True},
+    ))
+    port_map = allocate(cfg)
+    pk1, pk2, pk3 = "02" + "ab" * 32, "03" + "cd" * 32, "02" + "ef" * 32
+    onion = "abc234def567ghi890jkl123mno456pqr789stu012vwx345yz678abd.onion"
+    section = next(
+        s for s in build_sections(
+            cfg, port_map,
+            {"usage": {}, "host": {},
+             "lnd": {"regtest": pk1}, "lnd2": {"regtest": pk2},
+             "lnd3": {"regtest": pk3}},
+            onion)
+        if s.key == "regtest"
     )
-    assert f"{pk}@{cfg.global_.hostname}:{p2p}" in lnd.command  # clearnet URI
-    assert f"{pk}@{onion}:{p2p}" in lnd.command_onion  # onion URI, same container
+    cmd = next(
+        v.command for v in
+        next(t for t in section.attach_tools if t.key == "lncli").variants
+        if v.os == "linux"
+    )
+    for pk, p2p_key in ((pk1, "lnd_p2p"), (pk2, "lnd2_p2p"), (pk3, "lnd3_p2p")):
+        p2p = port_map["regtest"][p2p_key]
+        assert f"🧅 lncli connect {pk}@{onion}:{p2p}" in cmd
+    assert cmd.count("🧅") == 3  # one per node, none missed
 
 
 # --- generation -------------------------------------------------------------
@@ -813,6 +919,22 @@ def test_index_renders_network_tabs(client):
     assert "#nettab-regtest:checked ~ .net-panels #netpanel-regtest" in body
     # The default (first enabled) network's radio is checked.
     assert "checked" in body
+
+
+def test_index_renders_version_column_and_os_tabs(client):
+    body = client.get("/").get_data(as_text=True)
+    # Version column: header + a linked version pointing at the upstream repo.
+    assert "<th>Version</th>" in body
+    assert 'href="https://github.com/bitcoin/bitcoin"' in body
+    assert ">v28.0<" in body
+    # Per-network OS tabs (CSS-only) + their reveal rule in the page <style>.
+    assert 'id="os-regtest-linux"' in body
+    assert 'id="os-regtest-windows"' in body
+    assert "#os-regtest-linux:checked ~ .attach-tools .attach-os.os-linux" in body
+    # Per-tool collapsibles with the verified default install paths.
+    assert 'class="attach-tool"' in body
+    assert "/Applications/Electrum.app/Contents/MacOS/run_electrum" in body
+    assert r"C:\Program Files\Bitcoin\daemon\bitcoind.exe" in body
 
 
 def test_theme_cookie_set(client):

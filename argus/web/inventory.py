@@ -11,17 +11,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
+from .. import __version__ as ARGUS_VERSION
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
 from ..reset import format_reset_eta, seconds_until_reset
 from ..tor import onion_routes, onion_web_path_routed
 from .content import (
     MEMPOOL_SPACE_LN_NODE,
+    SUBTOOL_REPO,
     VARIANT_ORDER,
     VARIANTS,
     AttachCommand,
+    AttachTool,
     Variant,
     attach_commands,
+    attach_tool_groups,
+    image_version,
 )
 from .metrics import bucket_for
 
@@ -50,6 +55,11 @@ class ServiceRow:
     links: list[LinkRef] = field(default_factory=list)
     ram: int | None = None
     disk: int | None = None
+    # The deployed version of this sub-tool (a docker image tag, a git ref, or the
+    # Argus version for our own components) and the GitHub repo it links to. Both
+    # None => no version cell (shown as "—").
+    version: str | None = None
+    repo_url: str | None = None
 
     @property
     def audience(self) -> str:
@@ -124,6 +134,8 @@ class NetworkSection:
     enabled: bool
     services: list[ServiceRow] = field(default_factory=list)
     attach: list[AttachCommand] = field(default_factory=list)
+    # Visitor "attach your tools" recipes, grouped by tool with per-OS commands.
+    attach_tools: list[AttachTool] = field(default_factory=list)
     ram_total: int = 0
     disk_total: int = 0
     reset: ResetInfo | None = None
@@ -204,6 +216,7 @@ def _service_rows(
 ) -> list[ServiceRow]:
     net = cfg.networks[net_key]
     spec = NETWORK_SPECS[net_key]
+    g = cfg.global_
     rows: list[ServiceRow] = []
 
     def row(name: str, bucket: str, **kw) -> ServiceRow:
@@ -222,7 +235,12 @@ def _service_rows(
         )
         return LinkRef(label, clear, onion)
 
-    # Bitcoin Core node (always present).
+    # Bitcoin Core node (always present). Mutinynet runs a signetblocktime fork
+    # (its own image + repo); everyone else runs upstream Bitcoin Core.
+    if spec.needs_knots:
+        core_image, core_repo = g.bitcoind_knots_image, SUBTOOL_REPO["bitcoind_signet_fork"]
+    else:
+        core_image, core_repo = g.bitcoind_image, SUBTOOL_REPO["bitcoind"]
     rows.append(
         row(
             "Bitcoin Core node",
@@ -231,12 +249,17 @@ def _service_rows(
                 PortRef("P2P", ports["bitcoind_p2p"], public=net.bitcoind.p2p_public),
                 PortRef("RPC", ports["bitcoind_rpc"], public=False),
             ],
+            version=image_version(core_image) or None,
+            repo_url=core_repo,
         )
     )
 
-    # Block producer (regtest or a self-mined custom signet).
+    # Block producer (regtest or a self-mined custom signet) — Argus's own miner.
     if net.miner.enabled and spec.supports_miner:
-        rows.append(row("Signet miner" if spec.is_signet else "Regtest miner", "miner"))
+        rows.append(row(
+            "Signet miner" if spec.is_signet else "Regtest miner", "miner",
+            version=ARGUS_VERSION, repo_url=SUBTOOL_REPO["argus"],
+        ))
 
     # Standalone LND node(s). On mined networks a second node ("argus2") is added
     # and the two are auto-wired with channels. When we know a node's pubkey, link
@@ -263,6 +286,8 @@ def _service_rows(
                     PortRef("gRPC", ports[grpc], public=False),
                 ],
                 links=links,
+                version=image_version(g.lnd_image) or None,
+                repo_url=SUBTOOL_REPO["lnd"],
             )
         )
 
@@ -289,17 +314,21 @@ def _service_rows(
     # onion's port 80 (the dashboard's port) since the onion routes that port
     # through Caddy's path routing — see argus/tor.py — so the onion variant is the
     # bare onion host with the same path. Usage shows n/a: the faucet container
-    # (argus-faucet) isn't attributed to any one network.
+    # (argus-faucet) isn't attributed to any one network. The faucet is Argus's own
+    # code and, when enabled, is shown first in the list (rows.insert(0, ...)).
     if net.faucet.enabled:
         faucet_onion = (
             f"http://{onion_hostname}/{net_key}/faucet" if onion_faucet else None
         )
-        rows.append(
+        rows.insert(
+            0,
             row(
                 "Faucet and lightning functions",
                 "faucet",
                 links=[LinkRef("Open faucet", f"/{net_key}/faucet", faucet_onion)],
-            )
+                version=ARGUS_VERSION,
+                repo_url=SUBTOOL_REPO["argus"],
+            ),
         )
 
     # Fulcrum indexers (Electrum servers).
@@ -312,6 +341,8 @@ def _service_rows(
                     PortRef("Electrum TCP", ports[f"fulcrum_{i}_electrum_tcp"], public=True),
                     PortRef("admin", ports[f"fulcrum_{i}_admin"], public=False),
                 ],
+                version=image_version(g.fulcrum_image) or None,
+                repo_url=SUBTOOL_REPO["fulcrum"],
             )
         )
 
@@ -326,6 +357,8 @@ def _service_rows(
                 "cashu",
                 ports=[PortRef("HTTP", ports["cashu_public"], public=True)],
                 links=[link("Mint info", net.cashu.ssl, ports["cashu_public"], "v1/info")],
+                version=image_version(g.cashu_image) or None,
+                repo_url=SUBTOOL_REPO["cashu"],
             )
         )
         # Co-located cashu.me web wallet, pre-pointed at this network's mint via
@@ -347,6 +380,8 @@ def _service_rows(
                     "cashu-wallet",
                     ports=[PortRef("HTTP", ports["cashu_wallet_public"], public=True)],
                     links=[LinkRef("Open wallet", clear, onion)],
+                    version=(g.cashu_wallet_ref[:7] or None),
+                    repo_url=SUBTOOL_REPO["cashu_wallet"],
                 )
             )
 
@@ -358,6 +393,8 @@ def _service_rows(
                 "mempool",
                 ports=[PortRef("Web", ports["mempool_public"], public=True)],
                 links=[link("Explorer", net.mempool.ssl, ports["mempool_public"])],
+                version=image_version(g.mempool_frontend_image) or None,
+                repo_url=SUBTOOL_REPO["mempool"],
             )
         )
 
@@ -377,6 +414,8 @@ def _service_rows(
                     link("Admin", net.bitcart.ssl, ports["bitcart_admin_public"]),
                     link("API", net.bitcart.ssl, ports["bitcart_api_public"]),
                 ],
+                version=(net.bitcart.branch or None),
+                repo_url=SUBTOOL_REPO["bitcart"],
             )
         )
 
@@ -500,11 +539,12 @@ def build_sections(
             )
             section.ram_total = sum(s.ram or 0 for s in section.services)
             section.disk_total = sum(s.disk or 0 for s in section.services)
-            section.attach = attach_commands(
-                net_key, cfg.global_.hostname, ports, net.bitcoind.p2p_public
-            )
-            # Prepend the LND connection URI(s) when the node pubkey(s) are known.
-            # Insert node2 first then node1 so argus1 ends up at the very top.
+            # Operator recipes (Bitcoin Core RPC). Visitor recipes are grouped,
+            # per-OS, in section.attach_tools below.
+            section.attach = attach_commands(net_key, ports)
+
+            # The LND connection URI(s) for the per-OS "Lightning (lncli)" group,
+            # known only once each node has reported its pubkey. argus1 first.
             spec = NETWORK_SPECS[net_key]
             uris: list[tuple[str, str, int]] = []
             pk1 = (metrics.get("lnd") or {}).get(net_key)
@@ -521,22 +561,17 @@ def build_sections(
                 pk3 = (metrics.get("lnd3") or {}).get(net_key)
                 if pk3:
                     uris.append((net.lnd.tertiary.name, pk3, ports["lnd3_p2p"]))
-            for label, pk, p2p in reversed(uris):
-                uri = f"{pk}@{cfg.global_.hostname}:{p2p}"
-                # Clearnet connect line, with the onion connect (when Tor is on)
-                # shown right below it in the SAME code box. The node advertises
-                # this onion in gossip, so peers can open channels over Tor too.
-                onion_cmd = (
-                    f"lncli connect {pk}@{onion_hostname}:{p2p}"
-                    if onion_hostname else ""
-                )
-                section.attach.insert(0, AttachCommand(
-                    label=f"Lightning node {label} (LND) — connect / open a channel",
-                    command=f"lncli connect {uri}",
-                    note="The node's public connection URI is pubkey@host:port.",
-                    audience="visitor",
-                    command_onion=onion_cmd,
-                ))
+
+            # A vanilla node needs the challenge to peer a *custom* signet; the
+            # public signet and the PoW chains don't (None there). Mirrors the
+            # resolution in argus/bitcart.py.
+            signet_challenge = None
+            if spec.is_signet and net_key != "signet":
+                signet_challenge = net.signet_challenge or spec.default_signet_challenge
+            section.attach_tools = attach_tool_groups(
+                net_key, cfg.global_.hostname, ports, net.bitcoind.p2p_public,
+                signet_challenge, uris, onion_hostname,
+            )
 
             # Operator "add liquidity" panel: deposit addresses + balances per node.
             labels: list[tuple[str, str]] = [

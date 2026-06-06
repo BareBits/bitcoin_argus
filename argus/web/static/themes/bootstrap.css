@@ -20,6 +20,8 @@
   --tab-active-bg: #0d6efd;
   --tab-active-fg: #ffffff;
   --tab-active-border: #0d6efd;
+  /* "Attach your tools" panel fill — a light blue, distinct from the white card. */
+  --attach-bg: #eef4ff;
 }
 
 * { box-sizing: border-box; }
