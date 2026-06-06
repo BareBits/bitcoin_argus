@@ -27,6 +27,10 @@ from dataclasses import dataclass, field
 # Where the LND node-info sidecar writes the identity pubkey (see builders/lnd.py).
 _LND_NODEINFO_PATH = "/home/lnd/.lnd/argus_nodeinfo.json"
 
+# Where the same per-node sidecar writes the liquidity snapshot the operator
+# dashboard reads (deposit address, on-chain balance, channel in/out totals).
+_LND_LIQUIDITY_PATH = "/home/lnd/.lnd/argus_liquidity.json"
+
 # Where the donations sidecar writes {address, total_received, balance}
 # (see builders/donations.py).
 _DONATIONS_PATH = "/state/donations.json"
@@ -39,14 +43,15 @@ from ..constants import (
 
 # Buckets we aggregate usage into. A network's row in the page asks for usage by
 # one of these (fulcrum indexers use their own name-derived bucket, see below).
-# "lnd2" precedes "lnd" so the optional second node + its sidecar are attributed
-# separately (substring match would otherwise fold "lnd2" into "lnd").
+# "lnd2"/"lnd3" precede "lnd" so the ring's other nodes + their sidecars are
+# attributed separately (a substring match would otherwise fold them into "lnd").
 # "cashu-wallet" precedes "cashu" so the web wallet is attributed to its own
 # bucket (a substring match would otherwise fold "cashu-wallet" into "cashu").
 _KEYWORD_BUCKETS = (
     "bitcoind",
     "miner",
     "lnd2",
+    "lnd3",
     "lnd",
     "cashu-wallet",
     "cashu",
@@ -122,9 +127,13 @@ class MetricsResult:
     # usage[net_key][bucket] -> {"ram": int, "disk": int}
     usage: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
     host: dict[str, int | None] = field(default_factory=dict)
-    # lnd[net_key] / lnd2[net_key] -> identity pubkey (hex), when discoverable.
+    # lnd[net_key] / lnd2[net_key] / lnd3[net_key] -> identity pubkey (hex).
     lnd: dict[str, str] = field(default_factory=dict)
     lnd2: dict[str, str] = field(default_factory=dict)
+    lnd3: dict[str, str] = field(default_factory=dict)
+    # liquidity[net_key][service] -> the node's liquidity snapshot (address,
+    # on-chain + channel balances) for the operator "add liquidity" panel.
+    liquidity: dict[str, dict[str, dict]] = field(default_factory=dict)
     # donations[net_key] -> {"address", "total_received", "balance"} (BTC strings).
     donations: dict[str, dict[str, str]] = field(default_factory=dict)
     # reset[net_key] -> {"size_on_disk", "limit_bytes", "block_interval_seconds",
@@ -138,6 +147,8 @@ class MetricsResult:
             "host": self.host,
             "lnd": self.lnd,
             "lnd2": self.lnd2,
+            "lnd3": self.lnd3,
+            "liquidity": self.liquidity,
             "donations": self.donations,
             "reset": self.reset,
             "errors": self.errors,
@@ -160,6 +171,23 @@ def _lnd_pubkey(client, net_key: str, service: str = "lnd") -> str | None:
         data = json.loads(member.read().decode())
         pubkey = data.get("identity_pubkey")
         return pubkey or None
+    except Exception:
+        return None
+
+
+def _lnd_liquidity(client, net_key: str, service: str) -> dict | None:
+    """Read a node's liquidity snapshot (address + balances) via the Docker API.
+
+    Uses get_archive (a GET, allowed by the read-only socket proxy), like the
+    pubkey/donation readers. ``service`` is the compose service name ("lnd",
+    "lnd2", "lnd3"). Returns None if the node/file isn't present yet."""
+    try:
+        ct = client.containers.get(f"argus-{net_key}-{service}")
+        bits, _ = ct.get_archive(_LND_LIQUIDITY_PATH)
+        tf = tarfile.open(fileobj=io.BytesIO(b"".join(bits)))
+        member = tf.extractfile(tf.getmembers()[0])
+        data = json.loads(member.read().decode())
+        return data if isinstance(data, dict) else None
     except Exception:
         return None
 
@@ -270,6 +298,8 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
     usage: dict[str, dict[str, Usage]] = {}
     lnd: dict[str, str] = {}
     lnd2: dict[str, str] = {}
+    lnd3: dict[str, str] = {}
+    liquidity: dict[str, dict[str, dict]] = {}
     donations: dict[str, dict[str, str]] = {}
     reset: dict[str, dict] = {}
     errors: list[str] = []
@@ -331,6 +361,16 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
             pubkey2 = _lnd_pubkey(client, net_key, service="lnd2")
             if pubkey2:
                 lnd2[net_key] = pubkey2
+            pubkey3 = _lnd_pubkey(client, net_key, service="lnd3")
+            if pubkey3:
+                lnd3[net_key] = pubkey3
+            liq = {}
+            for svc in ("lnd", "lnd2", "lnd3"):
+                snap = _lnd_liquidity(client, net_key, svc)
+                if snap:
+                    liq[svc] = snap
+            if liq:
+                liquidity[net_key] = liq
             info = _donation_info(client, net_key)
             if info:
                 donations[net_key] = info
@@ -348,6 +388,8 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         host=host,
         lnd=lnd,
         lnd2=lnd2,
+        lnd3=lnd3,
+        liquidity=liquidity,
         donations=donations,
         reset=reset,
         errors=errors + herrs,

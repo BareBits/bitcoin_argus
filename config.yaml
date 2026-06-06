@@ -146,13 +146,26 @@ networks:
 #   lnd:      { name, color, extra_args: [...], extra_env: {...}, auto_compact,
 #               advertise_external_ip: true, wumbo, min_chan_size,
 #               secondary: { enabled, name: argus2, color },
-#               channels: { enabled, fund_btc: 25, channel_btc: 10 } }
-#               # On regtest + custom-signet a SECOND LND node (argus2) is
-#               # deployed by default and the two are auto-funded (25 BTC each)
-#               # and wired with a 10 BTC channel in each direction. name/color
-#               # set the gossip alias (<=32 bytes) + color. advertise_external_ip
-#               # publishes <hostname>:<p2p> in gossip so peers can find us.
-#               # Set secondary.enabled/channels.enabled false to opt out.
+#               tertiary:  { enabled, name: argus3, color },
+#               channels:  { enabled, funding, fund_btc: 25, channel_btc: 10,
+#                            rebalancer: { enabled, interval_seconds: 300,
+#                                          low_ratio: 0.35, high_ratio: 0.65,
+#                                          max_fee_sat: 1000 } } }
+#               # THREE LND nodes (argus1/2/3) are deployed by default on every
+#               # network and wired into a "liquidity ring" — argus1->argus2->
+#               # argus3->argus1 — so each node can keep both inbound AND outbound
+#               # liquidity by rebalancing OFF-CHAIN around the ring (no Loop/Boltz,
+#               # works on every testnet). Each node is funded fund_btc on-chain and
+#               # opens one channel_btc channel to the next hop; an initial circular
+#               # rebalance brings every channel to ~50/50.
+#               # funding: 'auto' mines+funds (mineable nets); 'external' waits for
+#               # coins you send to each node's address (the operator dashboard shows
+#               # the deposit addresses). Default: auto on mineable+miner, else
+#               # external. rebalancer keeps channels in the low/high ratio band.
+#               # name/color set each node's gossip alias (<=32 bytes) + color.
+#               # advertise_external_ip publishes <hostname>:<p2p> so peers find us.
+#               # Set channels.enabled false (or secondary/tertiary.enabled false)
+#               # to opt out of the ring on a given network.
 #               # NOTE: on regtest the bitcoind P2P (mining) port stays CLOSED
 #               # until channel setup completes, then bitcoind reopens it
 #               # automatically — keeping funding safe from adversarial reorgs.

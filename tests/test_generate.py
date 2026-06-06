@@ -84,32 +84,58 @@ def test_custom_signet_p2p_not_gated(tmp_path):
     assert not (out / "open-mining.sh").exists()
 
 
-def test_secondary_lnd_and_channel_sidecars(tmp_path):
+def test_ring_nodes_and_sidecars(tmp_path):
     out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     compose = yaml.safe_load(_read(out / "regtest" / "docker-compose.yml"))
     svcs = compose["services"]
-    assert {"lnd", "lnd2", "lnd-nodeinfo", "lnd2-nodeinfo",
-            "lnd-setup", "lnd-channels"} <= set(svcs)
-    # Second node: P2P public (30013), gRPC/REST loopback.
-    assert "30013:9735" in svcs["lnd2"]["ports"]
-    assert "127.0.0.1:30015:10009" in svcs["lnd2"]["ports"]
-    # Aliases/colors distinguish the two nodes.
+    # Three-node ring: all nodes, their reporters, funding, ring opener, rebalancer.
+    assert {"lnd", "lnd2", "lnd3", "lnd-nodeinfo", "lnd2-nodeinfo", "lnd3-nodeinfo",
+            "lnd-setup", "lnd-channels", "lnd-rebalancer"} <= set(svcs)
+    # Third node: P2P public (30016), gRPC/REST loopback.
+    assert "30016:9735" in svcs["lnd3"]["ports"]
+    assert "127.0.0.1:30018:10009" in svcs["lnd3"]["ports"]
+    # Aliases distinguish the three nodes.
     assert "alias=argus1" in _read(out / "regtest" / "lnd" / "lnd.conf")
     assert "alias=argus2" in _read(out / "regtest" / "lnd2" / "lnd.conf")
-    # Setup sidecar (bitcoind image) funds; channels sidecar (LND image) opens.
+    assert "alias=argus3" in _read(out / "regtest" / "lnd3" / "lnd.conf")
+    # Setup (bitcoind image) funds; channels + rebalancer (LND image).
     assert svcs["lnd-setup"]["image"] == "${BITCOIND_IMAGE}"
     assert svcs["lnd-channels"]["image"] == "${LND_IMAGE}"
+    assert svcs["lnd-rebalancer"]["image"] == "${LND_IMAGE}"
     assert svcs["lnd-setup"]["environment"]["FUNDING_WALLET"] == "miner"
+    # Auto funding mode on regtest; ring opener depends on all three nodes.
+    assert svcs["lnd-channels"]["environment"]["FUNDING"] == "auto"
+    assert "lnd3" in svcs["lnd-channels"]["depends_on"]
     assert "lnd_setup_state" in compose["volumes"]
+    # Ring opener script wires all three hops and does the initial rebalance.
+    ring = _read(out / "regtest" / "lnd_setup" / "channels.sh")
+    assert "ring_l1_l2" in ring and "ring_l2_l3" in ring and "ring_l3_l1" in ring
+    assert "allow_self_payment" in ring
 
 
-def test_single_lnd_when_secondary_off(tmp_path):
+def test_external_funding_omits_setup_sidecar(tmp_path):
+    # On a non-mineable net the ring funds externally: no lnd-setup, and the ring
+    # opener runs in external mode (waits for coins sent to each node).
     out, _ = _gen(tmp_path, make({"signet": {"enabled": True, "bitcart": BITCART_OFF}}))
+    compose = yaml.safe_load(_read(out / "signet" / "docker-compose.yml"))
+    svcs = compose["services"]
+    assert {"lnd", "lnd2", "lnd3", "lnd-channels", "lnd-rebalancer"} <= set(svcs)
+    assert "lnd-setup" not in svcs
+    assert svcs["lnd-channels"]["environment"]["FUNDING"] == "external"
+
+
+def test_single_lnd_when_ring_off(tmp_path):
+    # Opting out of the ring (channels + both extra nodes off) leaves one node and
+    # no funding/channel orchestration.
+    out, _ = _gen(tmp_path, make({"signet": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "lnd": {"channels": {"enabled": False},
+                "secondary": {"enabled": False},
+                "tertiary": {"enabled": False}}}}))
     compose = yaml.safe_load(_read(out / "signet" / "docker-compose.yml"))
     svcs = set(compose["services"])
     assert "lnd" in svcs
-    assert not ({"lnd2", "lnd-setup", "lnd-channels"} & svcs)
-    # No second node => no funding/channel orchestration, no open-mining.
+    assert not ({"lnd2", "lnd3", "lnd-setup", "lnd-channels", "lnd-rebalancer"} & svcs)
     assert not (out / "open-mining.sh").exists()
 
 
@@ -142,16 +168,18 @@ def test_lnd_nodeinfo_sidecar(tmp_path):
     assert "lnd-nodeinfo" in compose["services"]
     side = compose["services"]["lnd-nodeinfo"]
     assert side["depends_on"]["lnd"]["condition"] == "service_healthy"
-    assert side["restart"] == "on-failure"
+    # Now a long-running reporter (identity + address + liquidity snapshot).
+    assert side["restart"] == "unless-stopped"
     # Runs from a mounted script (not an inline entrypoint) so compose's variable
-    # interpolation can't mangle the shell ``$i``/``$A`` references.
+    # interpolation can't mangle the shell ``$1``/``$A`` references.
     assert side["entrypoint"] == ["/bin/sh", "/scripts/nodeinfo.sh"]
     assert any("nodeinfo.sh:/scripts/nodeinfo.sh:ro" in v for v in side["volumes"])
     assert side["environment"]["RPCSERVER"] == "lnd:10009"
-    # Channels on for regtest => the node writes a funding address too.
-    assert side["environment"]["WRITE_ADDR"] == "1"
+    assert side["environment"]["ALIAS"] == "argus1"
     script = _read(out / "regtest" / "lnd" / "nodeinfo.sh")
     assert "argus_nodeinfo.json" in script and "newaddress p2wkh" in script
+    # Writes the liquidity snapshot the operator dashboard reads.
+    assert "argus_liquidity.json" in script
 
 
 def test_donations_sidecar_reuses_mining_wallet(tmp_path):

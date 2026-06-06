@@ -190,10 +190,10 @@ def _check_color(v: str) -> str:
 
 
 class LndSecondaryCfg(_Base):
-    """A second LND node on the same network (for inter-node channels).
+    """The second LND node (``argus2``) — the ring's middle hop.
 
-    Only valid on networks Argus mines (regtest/custom-signet). ``enabled`` is
-    tri-state: None => on for those networks, off elsewhere.
+    ``enabled`` is tri-state: None => on wherever the liquidity ring is on (see
+    :meth:`NetworkCfg.lnd_channels_enabled`), off if explicitly disabled.
     """
 
     enabled: bool | None = None
@@ -211,17 +211,84 @@ class LndSecondaryCfg(_Base):
         return _check_color(v)
 
 
-class LndChannelsCfg(_Base):
-    """Auto-fund both LND nodes and open channels between them at startup.
+class LndTertiaryCfg(_Base):
+    """The third LND node (``argus3``) — the hop that closes the liquidity ring.
 
-    Only valid on networks Argus mines. ``enabled`` is tri-state (None => on for
-    those networks). Each node is funded with ``fund_btc`` on-chain and opens one
-    channel of ``channel_btc`` to the other (two channels total).
+    A triangle (argus1->argus2->argus3->argus1) is the smallest graph in which a
+    node can restore its own inbound/outbound balance purely off-chain (circular
+    rebalancing), with no swap provider — so it works on every testnet. ``enabled``
+    is tri-state like the secondary (None => on wherever the ring is on).
     """
 
     enabled: bool | None = None
+    name: str = "argus3"  # gossip alias (<=32 bytes)
+    color: str = "#33cc66"
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return _check_alias(v)
+
+    @field_validator("color")
+    @classmethod
+    def _check_col(cls, v: str) -> str:
+        return _check_color(v)
+
+
+class LndRebalancerCfg(_Base):
+    """Periodic off-chain circular rebalancing to keep ring channels near 50/50.
+
+    A long-running sidecar checks each ring channel every ``interval_seconds``; a
+    channel whose local share leaves the ``low_ratio``..``high_ratio`` band is
+    nudged back toward 0.5 with a circular self-payment routed around the ring
+    (``lncli payinvoice --outgoing_chan_id .. --last_hop ..``), capped at
+    ``max_fee_sat``. ``enabled`` is tri-state (None => on wherever the ring is on).
+    Only meaningful with the ring (``lnd.channels``).
+    """
+
+    enabled: bool | None = None
+    interval_seconds: int = Field(default=300, ge=30)
+    low_ratio: float = Field(default=0.35, gt=0.0, lt=1.0)
+    high_ratio: float = Field(default=0.65, gt=0.0, lt=1.0)
+    # Circular-rebalance fees are paid between the operator's OWN ring nodes, so a
+    # generous cap just lets rebalances succeed; it isn't a real cost. Sized to
+    # clear a half-channel move at LND's default ~1 ppm over two hops.
+    max_fee_sat: int = Field(default=5000, ge=0)
+
+    @model_validator(mode="after")
+    def _check_band(self) -> "LndRebalancerCfg":
+        if self.low_ratio >= self.high_ratio:
+            raise ValueError(
+                f"lnd.channels.rebalancer.low_ratio ({self.low_ratio}) must be "
+                f"< high_ratio ({self.high_ratio})"
+            )
+        return self
+
+
+class LndChannelsCfg(_Base):
+    """The liquidity ring: fund the three LND nodes and wire them into a channel
+    ring at startup (argus1->argus2->argus3->argus1).
+
+    Each node opens one single-funded ``channel_btc`` channel to the next hop, then
+    a one-shot circular rebalance brings every channel to ~50/50 so both directions
+    are live from the start. ``funding`` selects how the nodes get their on-chain
+    coins:
+
+    * ``auto`` — mine + fund from the miner/signer wallet (only on networks Argus
+      mines: regtest/custom-signet).
+    * ``external`` — wait for coins sent to each node's on-chain address (e.g. a
+      public faucet); the operator dashboard surfaces the addresses to fund.
+
+    ``funding`` is tri-state: None => ``auto`` on a mineable network with the miner
+    on, else ``external``. ``enabled`` is tri-state (None => on for every enabled
+    network). Each node is funded with ``fund_btc`` on-chain.
+    """
+
+    enabled: bool | None = None
+    funding: Literal["auto", "external"] | None = None
     fund_btc: float = Field(default=25.0, gt=0)
     channel_btc: float = Field(default=10.0, gt=0)
+    rebalancer: LndRebalancerCfg = Field(default_factory=LndRebalancerCfg)
 
 
 class LndCfg(_Base):
@@ -237,6 +304,7 @@ class LndCfg(_Base):
     wumbo: bool = False  # allow/accept channels > ~0.167 BTC (auto-on if channels need it)
     min_chan_size: int | None = Field(default=None, ge=1)  # sats; lower for tiny channels
     secondary: LndSecondaryCfg = Field(default_factory=LndSecondaryCfg)
+    tertiary: LndTertiaryCfg = Field(default_factory=LndTertiaryCfg)
     channels: LndChannelsCfg = Field(default_factory=LndChannelsCfg)
 
     @field_validator("name")
@@ -463,24 +531,55 @@ class NetworkCfg(_Base):
         v = self.reset.enabled
         return (net_key in _MINEABLE_NETWORKS) if v is None else v
 
-    def lnd_secondary_enabled(self, spec: NetworkSpec) -> bool:
-        """Whether a second LND node is deployed.
-
-        Defaults on for mined networks (so the auto-channel pair exists), but only
-        when the miner is on — disabling the miner cleanly opts out of the default
-        rather than forcing an error. An explicit value always wins.
-        """
-        v = self.lnd.secondary.enabled
-        return (spec.supports_miner and self.miner.enabled) if v is None else v
-
     def lnd_channels_enabled(self, spec: NetworkSpec) -> bool:
-        """Whether auto-funding + channel setup runs.
+        """Whether the liquidity ring (fund + open the 3-node channel ring) runs.
 
-        Defaults on for mined networks with the miner enabled (it funds the
-        channels). An explicit value always wins (and is validated).
+        Defaults on for every enabled network: on mineable nets it self-funds by
+        mining; elsewhere it funds externally (the operator sends coins to each
+        node's address). An explicit value always wins (and is validated).
         """
         v = self.lnd.channels.enabled
-        return (spec.supports_miner and self.miner.enabled) if v is None else v
+        return True if v is None else v
+
+    def lnd_ring_enabled(self, spec: NetworkSpec) -> bool:
+        """Alias for :meth:`lnd_channels_enabled` — the ring *is* the channels."""
+        return self.lnd_channels_enabled(spec)
+
+    def lnd_secondary_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether the second LND node (``argus2``) is deployed.
+
+        The ring needs all three nodes, so this defaults to whatever the ring does;
+        it can also be enabled standalone (two idle nodes, no auto-channels). An
+        explicit value always wins.
+        """
+        v = self.lnd.secondary.enabled
+        return self.lnd_channels_enabled(spec) if v is None else v
+
+    def lnd_tertiary_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether the third LND node (``argus3``) is deployed (closes the ring).
+
+        Defaults to whatever the ring does. An explicit value always wins.
+        """
+        v = self.lnd.tertiary.enabled
+        return self.lnd_channels_enabled(spec) if v is None else v
+
+    def lnd_funding_mode(self, spec: NetworkSpec) -> str:
+        """How the ring nodes get on-chain coins: ``auto`` (mine) or ``external``.
+
+        Tri-state: None => ``auto`` on a mineable network with the miner on, else
+        ``external``. An explicit value always wins (and is validated)."""
+        v = self.lnd.channels.funding
+        if v is not None:
+            return v
+        return "auto" if (spec.supports_miner and self.miner.enabled) else "external"
+
+    def lnd_rebalancer_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether the periodic circular-rebalancer sidecar runs.
+
+        Only meaningful with the ring; defaults to whatever the ring does. An
+        explicit value always wins (and is validated)."""
+        v = self.lnd.channels.rebalancer.enabled
+        return self.lnd_channels_enabled(spec) if v is None else v
 
     def bitcoind_p2p_gated(self, net_key: str, spec: NetworkSpec) -> bool:
         """Whether bitcoind self-gates its P2P listener (regtest auto-channels):
@@ -696,31 +795,26 @@ class ArgusConfig(_Base):
                     f"[{key}] automated mining is not implemented for this network"
                 )
 
-            # Secondary LND + auto-channels are only meaningful where Argus drives
-            # block production (it funds the channels by mining). Both default on
-            # there and off elsewhere; reject an explicit enable on other networks.
+            # The liquidity ring needs all three LND nodes; it can self-fund by
+            # mining (funding=auto, mineable nets) or wait for externally-sent coins
+            # (funding=external, any net). Validate the funding mode against the net
+            # and that the ring's three nodes are all present.
             secondary_on = net.lnd_secondary_enabled(spec)
+            tertiary_on = net.lnd_tertiary_enabled(spec)
             channels_on = net.lnd_channels_enabled(spec)
-            if secondary_on and not spec.supports_miner:
-                errors.append(
-                    f"[{key}] lnd.secondary is only supported on networks Argus "
-                    f"mines (regtest/custom-signet)"
-                )
+            funding = net.lnd_funding_mode(spec)
             if channels_on:
-                if not spec.supports_miner:
+                if not (secondary_on and tertiary_on):
                     errors.append(
-                        f"[{key}] lnd.channels auto-setup is only supported on "
-                        f"networks Argus mines (regtest/custom-signet)"
+                        f"[{key}] lnd.channels (the liquidity ring) needs all three "
+                        f"nodes; enable lnd.secondary and lnd.tertiary, or disable "
+                        f"lnd.channels"
                     )
-                if not secondary_on:
+                if funding == "auto" and not (spec.supports_miner and net.miner.enabled):
                     errors.append(
-                        f"[{key}] lnd.channels requires lnd.secondary (two nodes are "
-                        f"needed to open channels between them)"
-                    )
-                if not net.miner.enabled:
-                    errors.append(
-                        f"[{key}] lnd.channels requires the miner (block production "
-                        f"funds the channels); enable miner or disable lnd.channels"
+                        f"[{key}] lnd.channels.funding='auto' needs a network Argus "
+                        f"mines with the miner enabled (it funds the ring by mining); "
+                        f"use funding: external, or enable the miner"
                     )
                 if net.lnd.channels.channel_btc > net.lnd.channels.fund_btc:
                     errors.append(

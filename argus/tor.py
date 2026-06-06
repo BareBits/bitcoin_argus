@@ -135,6 +135,11 @@ def onion_routes(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[
                     net_key, f"LND ({net.lnd.secondary.name}) P2P",
                     ports["lnd2_p2p"], ports["lnd2_p2p"], "tcp",
                 ))
+            if net.lnd_tertiary_enabled(spec):
+                routes.append(OnionRoute(
+                    net_key, f"LND ({net.lnd.tertiary.name}) P2P",
+                    ports["lnd3_p2p"], ports["lnd3_p2p"], "tcp",
+                ))
 
         # Only expose bitcoind P2P over the onion where it is already public on
         # clearnet — if the operator closed it, the onion must not reopen it.
