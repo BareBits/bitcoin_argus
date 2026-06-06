@@ -22,6 +22,7 @@ import io
 import json
 import os
 import tarfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 # Where the LND node-info sidecar writes the identity pubkey (see builders/lnd.py).
@@ -251,6 +252,42 @@ def _container_memory_bytes(stats: dict) -> int:
     return max(usage - cache, 0)
 
 
+# Per-container ``stats(stream=False)`` is a ~1-2s round-trip to the docker daemon
+# (it samples a CPU/mem window), so collecting them serially scales linearly with
+# the container count — a multi-network install (dozens of containers) blows past
+# the dashboard worker's request timeout. They are independent reads, so fan them
+# out across a small thread pool: wall-clock drops from sum-of-calls to roughly the
+# slowest call. Bounded so we never hammer the socket proxy with hundreds at once.
+_STATS_MAX_WORKERS = 16
+
+
+def _container_ram_samples(client, containers) -> list[tuple[str, str, int]]:
+    """Working-set RAM per *attributable* container, fetched in parallel.
+
+    Returns ``(net_key, bucket, ram_bytes)`` for each container that classifies to
+    one of ours; containers that aren't ours, or whose ``stats`` call fails, are
+    skipped. Order is irrelevant (the caller sums into buckets)."""
+    matched = []
+    for c in containers:
+        net, bucket = classify(c.name)
+        if net is not None and bucket is not None:
+            matched.append((c, net, bucket))
+    if not matched:
+        return []
+
+    def _sample(item: tuple) -> tuple[str, str, int] | None:
+        c, net, bucket = item
+        try:
+            stats = c.stats(stream=False)
+        except Exception:
+            return None
+        return net, bucket, _container_memory_bytes(stats)
+
+    workers = min(_STATS_MAX_WORKERS, len(matched))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return [r for r in pool.map(_sample, matched) if r is not None]
+
+
 def _host_metrics() -> tuple[dict[str, int | None], list[str]]:
     """Whole-host disk and memory totals (bytes).
 
@@ -320,17 +357,13 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         errors.append(f"docker connect: {exc}")
 
     if client is not None:
-        # RAM: one-shot stats per running container.
+        # RAM: one-shot stats per running container, fetched in parallel (the calls
+        # are independent and individually slow — see _container_ram_samples).
         try:
-            for c in client.containers.list():
-                net, bucket = classify(c.name)
-                if net is None or bucket is None:
-                    continue
-                try:
-                    stats = c.stats(stream=False)
-                except Exception:
-                    continue
-                _add(usage, net, bucket).ram += _container_memory_bytes(stats)
+            for net, bucket, ram in _container_ram_samples(
+                client, client.containers.list()
+            ):
+                _add(usage, net, bucket).ram += ram
         except Exception as exc:
             errors.append(f"container stats: {exc}")
 

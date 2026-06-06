@@ -159,6 +159,39 @@ def test_collect_with_fake_docker(monkeypatch):
     assert "host" in result
 
 
+def test_container_ram_samples_parallel_skips_and_aggregates():
+    """The parallel RAM collector returns one sample per attributable container,
+    skipping containers that aren't ours and those whose stats() call fails."""
+
+    class C:
+        def __init__(self, name, mem=None, fail=False):
+            self.name, self._mem, self._fail = name, mem, fail
+
+        def stats(self, stream=False):
+            if self._fail:
+                raise RuntimeError("daemon hiccup")
+            return {"memory_stats": {"usage": self._mem, "stats": {"inactive_file": 0}}}
+
+    containers = [
+        C("argus-custom-signet-short-bitcoind", 100),
+        C("argus-custom-signet-long-bitcoind", 200),
+        C("argus-regtest-fulcrum-1", 50),
+        C("not-ours", 999),  # skipped: not classified
+        C("argus-regtest-mempool-db", fail=True),  # skipped: stats() raised
+    ]
+    samples = metrics._container_ram_samples(None, containers)
+    by_key = {(net, bucket): ram for net, bucket, ram in samples}
+    assert by_key == {
+        ("custom-signet-short", "bitcoind"): 100,
+        ("custom-signet-long", "bitcoind"): 200,
+        ("regtest", "fulcrum"): 50,
+    }
+
+
+def test_container_ram_samples_empty():
+    assert metrics._container_ram_samples(None, []) == []
+
+
 # --- cache TTL --------------------------------------------------------------
 
 

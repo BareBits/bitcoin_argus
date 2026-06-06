@@ -38,7 +38,11 @@ def _dockerfile() -> str:
         "COPY argus /app/argus\n"
         "ENV PYTHONUNBUFFERED=1 CONFIG_PATH=/app/config.yaml CACHE_DB=/data/cache.db\n"
         f"EXPOSE {_GUNICORN_PORT}\n"
-        'CMD ["gunicorn", "-b", "0.0.0.0:%d", "-w", "2", "--timeout", "120", '
+        # The dashboard's first (cold-cache) request collects per-container stats +
+        # volume sizes; on a large multi-network install that can run past the
+        # stock 120s worker timeout even with the parallel stats collection, so the
+        # window is widened (the result is cached for an hour afterward).
+        'CMD ["gunicorn", "-b", "0.0.0.0:%d", "-w", "2", "--timeout", "240", '
         '"argus.web.wsgi:app"]\n' % _GUNICORN_PORT
     )
 
