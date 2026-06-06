@@ -284,10 +284,13 @@ done
 mkdir -p /var/www/html/wp-content/mu-plugins
 cp /provision/argus-hardening.php /var/www/html/wp-content/mu-plugins/argus-hardening.php
 
-# 8. Pretty permalinks (WooCommerce + the BTCPay webhook endpoint need them). A
-# soft flush updates the rewrite-rule option; avoid `--hard` (it regenerates
-# .htaccess and can hang once the BTCPay gateway is configured).
-$WP rewrite structure '/%postname%/' || true
+# 8. Pretty permalinks (WooCommerce + the BTCPay webhook endpoint need them).
+# Set the option directly rather than `wp rewrite structure`: under WP-CLI the
+# latter can't detect Apache's mod_rewrite and prefixes the structure with
+# "/index.php" (making /shop/ 404); the image's .htaccess handles the rewrite, so
+# the clean structure is correct. A soft flush regenerates the rules (no `--hard`:
+# it rewrites .htaccess and can hang once the BTCPay gateway is configured).
+$WP option update permalink_structure '/%postname%/' || true
 $WP rewrite flush || true
 
 # 9. Import the trading-card products (idempotent by SKU). Ensure the uploads
