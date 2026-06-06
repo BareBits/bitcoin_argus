@@ -205,6 +205,13 @@ def test_build_contexts_and_provision_files(tmp_path):
     assert "woocommerce_coming_soon no" in prov
     assert "page_on_front" in prov
     assert "hello-world" in prov
+    # No non-admin content: product reviews off + registration off.
+    assert "woocommerce_enable_reviews no" in prov
+    assert "woocommerce_enable_myaccount_registration no" in prov
+    hardening = (woo / "argus-hardening.php").read_text()
+    assert "option_users_can_register" in hardening  # registration locked off
+    assert "woocommerce_product_tabs" in hardening    # reviews tab removed
+    assert "comments_open" in hardening               # comments off
     # Seed wires auto-withdraw + derives an on-chain xpub from bitcoind.
     assert "auto_melt_address" in seed
     assert "derive_core_xpub" in seed
