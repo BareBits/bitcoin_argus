@@ -18,6 +18,14 @@ global:
   # The cashu.me web wallet is built from source (no official image); this pins
   # the git ref (commit SHA or tag) the build clones. Bump to update the wallet.
   # cashu_wallet_ref: adc4e107e961ad2567bc8cac1b7a987352ffc259
+  # CashuPayServer is built from the BareBits fork (no published image); pin the
+  # git ref it clones. The WooCommerce storefront uses the official images, with
+  # WooCommerce + the BTCPay plugin installed at provision time (empty => latest).
+  # cashupayserver_ref: main
+  # wordpress_image: wordpress:6.7.1-php8.3-apache
+  # wordpress_cli_image: wordpress:cli-php8.3
+  # woocommerce_version: ""           # e.g. "9.4.2" to pin; empty => latest
+  # btcpay_woocommerce_version: ""    # e.g. "4.4.0" to pin; empty => latest
   resources:                        # disk/RAM tuning (also settable per-network)
     profile: medium                 # low | medium | high (baseline knob values)
     log_rotation: true              # cap Docker json-file logs (10m x 3)
@@ -203,6 +211,17 @@ networks:
 #               ports: { store, admin, api, daemon }, extra_env: {...} }
 #               # bitcart admin password is auto-generated to secrets/<net>/;
 #               # SMTP password: add BITCART_SMTP_PASSWORD to secrets/<net>/secrets.env
+#   cashupayserver: { enabled, ssl, admin_email, submarine_swaps, extra_env: {...} }
+#               # BTCPay-compatible gateway backed by this network's Cashu mint.
+#               # On by default. Built from source (global.cashupayserver_ref);
+#               # admin password auto-generated to secrets/<net>/; admin_email
+#               # falls back to bitcart.admin_email. submarine_swaps default false.
+#   woocommerce: { enabled, ssl, admin_email, admin_user, store_name, extra_env }
+#               # WordPress/WooCommerce storefront (its own MariaDB) selling the
+#               # demo cards via the BTCPay plugin pointed at this net's
+#               # CashuPayServer (requires it). On by default; guest checkout on,
+#               # registration off, currency BTC. admin password auto-generated;
+#               # admin_user default "argus-admin"; admin_email falls back to bitcart.
 #   indexers: [ { name, enabled, ssl } ]    # one Fulcrum per entry
 #   mempool:  { enabled, ssl, statistics, lightning }  # statistics default true
 #             (biggest DB grower; set false to save disk); lightning default true

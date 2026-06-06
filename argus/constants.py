@@ -192,21 +192,32 @@ PORT_OFFSETS: dict[str, int] = {
     # Caddy public listeners for HTTP services:
     "cashu_public": 100,
     "cashu_wallet_public": 101,  # co-located cashu.me web wallet (per network)
+    "cashupayserver_public": 120,  # CashuPayServer (BTCPay-compatible gateway)
     "bitcart_store_public": 200,
     "bitcart_admin_public": 201,
     "bitcart_api_public": 202,
+    "woocommerce_public": 220,  # WordPress/WooCommerce storefront
     "mempool_public": 300,
     # Backend loopback ports (Caddy proxies to these):
     "cashu_backend": 110,
     "cashu_wallet_backend": 111,  # the per-network cashu.me nginx loopback port
+    "cashupayserver_backend": 130,  # CashuPayServer Apache loopback
     "bitcart_store": 210,
     "bitcart_admin": 211,
     "bitcart_api": 212,
     "bitcart_daemon": 213,
+    "woocommerce_backend": 230,  # WordPress/WooCommerce Apache loopback
+    "woocommerce_db": 231,  # reserved; WordPress DB is internal-only (not published)
     "mempool_web": 301,  # frontend loopback (Caddy proxies here)
     "mempool_api": 310,  # backend API loopback (debug)
     "mempool_db": 311,  # reserved; DB is internal-only (not published)
 }
+
+# In-container listen ports for the storefront services (identical across the
+# isolated per-network projects; host-facing ports come from the allocator).
+CASHUPAYSERVER_INTERNAL_PORT = 80  # php:apache
+WORDPRESS_INTERNAL_PORT = 80  # wordpress:apache
+WORDPRESS_DB_INTERNAL_PORT = 3306  # MariaDB (internal-only)
 
 # --- Resource profiles ------------------------------------------------------
 

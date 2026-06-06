@@ -24,6 +24,13 @@ _REQUIRED: dict[str, Callable[[str], str]] = {
     "MEMPOOL_DB_ROOT_PASSWORD": lambda net: _secrets.token_hex(16),
     # Bitcart admin password (hex => no quote chars, which the installer forbids).
     "BITCART_ADMIN_PASSWORD": lambda net: _secrets.token_hex(16),
+    # CashuPayServer admin password + WooCommerce/WordPress admin and DB
+    # passwords. Hex keeps them free of shell/quote metacharacters, since they
+    # flow through generated env files and provisioning commands.
+    "CASHUPAYSERVER_ADMIN_PASSWORD": lambda net: _secrets.token_hex(16),
+    "WORDPRESS_ADMIN_PASSWORD": lambda net: _secrets.token_hex(16),
+    "WORDPRESS_DB_PASSWORD": lambda net: _secrets.token_hex(16),
+    "WORDPRESS_DB_ROOT_PASSWORD": lambda net: _secrets.token_hex(16),
 }
 
 # Operator-supplied secrets (NOT auto-generated): if present in secrets.env they

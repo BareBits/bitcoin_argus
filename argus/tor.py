@@ -113,6 +113,17 @@ def onion_routes(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[
                     routes.append(OnionRoute(
                         net_key, label, ports[pub], ports[back], "http",
                     ))
+            if net.cashupayserver.enabled:
+                routes.append(OnionRoute(
+                    net_key, "CashuPayServer",
+                    ports["cashupayserver_public"], ports["cashupayserver_backend"],
+                    "http",
+                ))
+            if net.woocommerce.enabled:
+                routes.append(OnionRoute(
+                    net_key, "WooCommerce store",
+                    ports["woocommerce_public"], ports["woocommerce_backend"], "http",
+                ))
 
         if tor.expose_electrum:
             for i, ix in enumerate(net.enabled_indexers()):

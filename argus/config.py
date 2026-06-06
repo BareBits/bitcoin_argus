@@ -124,6 +124,20 @@ class GlobalConfig(_Base):
     # to update the wallet. Defaults to a known-good commit that supports the
     # ?mint= deep-link the dashboard relies on.
     cashu_wallet_ref: str = "adc4e107e961ad2567bc8cac1b7a987352ffc259"
+    # CashuPayServer (BareBits Lite) is a PHP app with no published image, so
+    # Argus builds it from source (generated/cashupayserver/). This pins the
+    # github.com/BareBits/cashupayserver git ref (commit SHA or tag) cloned; bump
+    # it to update the gateway. Defaults to the fork's main branch.
+    cashupayserver_ref: str = "main"
+    # The WooCommerce storefront runs on the official WordPress images; the
+    # WP-CLI image drives the (idempotent) provisioning.
+    wordpress_image: str = "wordpress:6.7.1-php8.3-apache"
+    wordpress_cli_image: str = "wordpress:cli-php8.3"
+    # WooCommerce + the BTCPay-for-WooCommerce plugin are installed at provision
+    # time via WP-CLI. Empty => the latest from wordpress.org (fine for testnets);
+    # pin a version string for reproducible builds.
+    woocommerce_version: str = ""
+    btcpay_woocommerce_version: str = ""
     caddy_image: str = "caddy:2"
     mempool_backend_image: str = "mempool/backend:v3.3.1"
     mempool_frontend_image: str = "mempool/frontend:v3.3.1"
@@ -383,6 +397,72 @@ class BitcartCfg(_Base):
     ports: BitcartPorts = Field(default_factory=BitcartPorts)
 
 
+class CashuPayServerCfg(_Base):
+    """CashuPayServer (BareBits Lite): a PHP, BTCPay-compatible payment gateway
+    backed by this network's Cashu mint.
+
+    No published image exists, so Argus builds it from source (see
+    :mod:`argus.cashupayserver`, pinned by ``global.cashupayserver_ref``) and
+    provisions it non-interactively with a generated PHP seed script that uses the
+    app's own classes (admin password, a store wired to the in-network mint, a
+    Greenfield API key for WooCommerce). Submarine swaps are disabled by default:
+    a self-contained testnet settles in ecash, not via an on-chain swap provider.
+    """
+
+    enabled: bool = True
+    ssl: bool = True
+    # Admin login email. Falls back to ``bitcart.admin_email`` when unset (see
+    # NetworkCfg.cashupayserver_admin_email), so a typical config sets it once.
+    admin_email: str | None = None
+    # The site-wide submarine-swap master switch. Off by design; flip to enable.
+    submarine_swaps: bool = False
+    extra_env: dict[str, str] = Field(default_factory=dict)
+
+
+class WooCommerceCfg(_Base):
+    """A minimal WordPress + WooCommerce storefront selling the demo trading
+    cards through the BTCPay-for-WooCommerce plugin pointed at this network's
+    CashuPayServer.
+
+    Guest checkout is on and user registration is off; unused WordPress/WooCommerce
+    features are stripped to keep the footprint small. Requires CashuPayServer on
+    the same network (the plugin points at it). Uses a dedicated, memory-tuned
+    MariaDB. The store currency is BTC; the cards (reused from
+    :mod:`argus.bitcart_cards`) are priced by converting their sats price to BTC.
+    """
+
+    enabled: bool = True
+    ssl: bool = True
+    # Admin login email; falls back to ``bitcart.admin_email`` when unset.
+    admin_email: str | None = None
+    admin_user: str = "argus-admin"  # WordPress admin username (not "admin")
+    store_name: str = "Argus Trading Cards"
+    extra_env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("admin_user")
+    @classmethod
+    def _check_admin_user(cls, v: str) -> str:
+        # Used as the WP login and passed to WP-CLI; keep it shell/DNS-safe.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{2,30}", v):
+            raise ValueError(
+                "woocommerce.admin_user must be 3-31 chars: lowercase "
+                "alphanumeric, hyphen or underscore (and not start with -/_)"
+            )
+        return v
+
+    @field_validator("store_name")
+    @classmethod
+    def _check_store_name(cls, v: str) -> str:
+        # Passed to WP-CLI as the blog title; reject control chars / quotes that
+        # could break the generated provisioning command.
+        if any(c in v for c in "\n\r'\"`$\\") or not v.strip():
+            raise ValueError(
+                "woocommerce.store_name must be non-empty and free of "
+                "quotes/control chars"
+            )
+        return v
+
+
 class IndexerCfg(_Base):
     """A Fulcrum instance. Multiple are allowed per network."""
 
@@ -491,6 +571,8 @@ class NetworkCfg(_Base):
     lnd: LndCfg = Field(default_factory=LndCfg)
     cashu: CashuCfg = Field(default_factory=CashuCfg)
     bitcart: BitcartCfg = Field(default_factory=BitcartCfg)
+    cashupayserver: CashuPayServerCfg = Field(default_factory=CashuPayServerCfg)
+    woocommerce: WooCommerceCfg = Field(default_factory=WooCommerceCfg)
     indexers: list[IndexerCfg] = Field(default_factory=lambda: [IndexerCfg()])
     mempool: MempoolCfg = Field(default_factory=MempoolCfg)
     miner: MinerCfg = Field(default_factory=MinerCfg)
@@ -522,6 +604,14 @@ class NetworkCfg(_Base):
 
     def enabled_indexers(self) -> list[IndexerCfg]:
         return [ix for ix in self.indexers if ix.enabled]
+
+    def cashupayserver_admin_email(self) -> str | None:
+        """CashuPayServer admin email: its own, else Bitcart's (shared default)."""
+        return self.cashupayserver.admin_email or self.bitcart.admin_email
+
+    def woocommerce_admin_email(self) -> str | None:
+        """WooCommerce admin email: its own, else Bitcart's (shared default)."""
+        return self.woocommerce.admin_email or self.bitcart.admin_email
 
     def mempool_enabled(self, spec: NetworkSpec) -> bool:
         if self.mempool.enabled is None:
@@ -891,11 +981,42 @@ class ArgusConfig(_Base):
                         f"payout address)"
                     )
 
+            # CashuPayServer settles payments against this network's Cashu mint,
+            # so it requires the mint, and an admin email (its own or Bitcart's).
+            if net.cashupayserver.enabled:
+                if not net.cashu.enabled:
+                    errors.append(
+                        f"[{key}] cashupayserver.enabled requires the network's Cashu "
+                        f"mint (cashu.enabled): it settles payments against it"
+                    )
+                if not net.cashupayserver_admin_email():
+                    errors.append(
+                        f"[{key}] cashupayserver.admin_email is required when "
+                        f"CashuPayServer is enabled (or set bitcart.admin_email to "
+                        f"share it)"
+                    )
+
+            # WooCommerce points its BTCPay plugin at this network's CashuPayServer,
+            # so it requires CashuPayServer enabled here, plus an admin email.
+            if net.woocommerce.enabled:
+                if not net.cashupayserver.enabled:
+                    errors.append(
+                        f"[{key}] woocommerce.enabled requires cashupayserver.enabled "
+                        f"on the same network (its BTCPay plugin points at it)"
+                    )
+                if not net.woocommerce_admin_email():
+                    errors.append(
+                        f"[{key}] woocommerce.admin_email is required when WooCommerce "
+                        f"is enabled (or set bitcart.admin_email to share it)"
+                    )
+
             # track whether any internet-facing SSL service exists (needs ACME email)
             if key != "regtest":
                 services_ssl = [
                     net.cashu.enabled and net.cashu.ssl,
                     net.bitcart.enabled and net.bitcart.ssl,
+                    net.cashupayserver.enabled and net.cashupayserver.ssl,
+                    net.woocommerce.enabled and net.woocommerce.ssl,
                     net.mempool_enabled(spec) and net.mempool.ssl,
                     any(ix.ssl for ix in net.enabled_indexers()),
                 ]

@@ -55,6 +55,10 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
             pool = net.bitcart.btclnd_p2p_pool_size
             rng = f"{base}" if pool == 1 else f"{base}:{base + pool - 1}"
             rules.append((rng, f"{net_key} bitcart btclnd p2p"))
+        if net.cashupayserver.enabled:
+            rules.append((str(ports["cashupayserver_public"]), f"{net_key} cashupayserver"))
+        if net.woocommerce.enabled:
+            rules.append((str(ports["woocommerce_public"]), f"{net_key} woocommerce"))
     return rules
 
 
