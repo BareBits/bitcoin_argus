@@ -58,31 +58,43 @@ def _dockerfile() -> str:
         "# big-int math for secp256k1, zip/curl/mbstring), plus Apache rewrite.\n"
         "RUN apt-get update \\\n"
         "    && apt-get install -y --no-install-recommends \\\n"
-        "        git unzip libgmp-dev libzip-dev \\\n"
+        "        git unzip libgmp-dev libzip-dev libsqlite3-dev \\\n"
         "    && docker-php-ext-install pdo pdo_sqlite gmp bcmath zip \\\n"
         "    && a2enmod rewrite \\\n"
         "    && rm -rf /var/lib/apt/lists/*\n"
         "COPY --from=composer:2 /usr/bin/composer /usr/bin/composer\n"
         "\n"
-        "# Honour the app's .htaccess (clean URLs / sensitive-dir blocks).\n"
+        "# Honour the app's .htaccess (clean URLs / sensitive-dir blocks) and pass\n"
+        "# the Authorization header to PHP (CGIPassAuth) — the Greenfield API reads\n"
+        "# the `Authorization: token <key>` header, which Apache otherwise strips.\n"
         "RUN printf '<Directory %s>\\n    AllowOverride All\\n    "
-        "Require all granted\\n</Directory>\\n' \"$APP_ROOT\" \\\n"
+        "Require all granted\\n    CGIPassAuth On\\n</Directory>\\n' \"$APP_ROOT\" \\\n"
         "        > /etc/apache2/conf-available/cashupay.conf \\\n"
         "    && a2enconf cashupay\n"
         "\n"
         f"WORKDIR {_APP_ROOT}\n"
         "# Clone at the pinned ref (checkout supports a commit SHA or a tag),\n"
-        "# including the cashu-wallet-php / mint-discovery submodules.\n"
-        "RUN git clone \"${CASHUPAYSERVER_REPO}\" . \\\n"
+        "# including the cashu-wallet-php / mint-discovery submodules. The app's\n"
+        "# includes/database.php require_once's CashuWallet.php, so the submodules\n"
+        "# are REQUIRED — keep this off the optional (|| true) composer step below.\n"
+        "RUN git config --global --add safe.directory '*' \\\n"
+        "    && git clone \"${CASHUPAYSERVER_REPO}\" . \\\n"
         "    && git checkout \"${CASHUPAYSERVER_REF}\" \\\n"
-        "    && git submodule update --init --recursive \\\n"
-        "    && composer install --no-dev --no-interaction --optimize-autoloader \\\n"
-        "        --no-progress 2>/dev/null || true\n"
+        "    && git submodule update --init --recursive\n"
+        "# Install PHP deps (PHPMailer, etc. — required: includes/email_sender.php\n"
+        "# require_once's vendor/autoload.php). --ignore-platform-reqs because some\n"
+        "# locked deps (bitwasp/bitcoin, lastguest/murmurhash) pin PHP ^7, but only\n"
+        "# the on-chain/swap code paths use them — which this deploy keeps disabled —\n"
+        "# and everything else runs fine on PHP 8.\n"
+        "RUN composer install --no-dev --no-interaction --ignore-platform-reqs \\\n"
+        "        --optimize-autoloader --no-progress\n"
         "\n"
-        "# The SQLite data dir is a runtime volume; keep the tree writable by the\n"
-        "# web user. The seed script lives OUTSIDE the docroot (cli-only anyway).\n"
-        f"RUN mkdir -p {_APP_ROOT}/data {_APP_ROOT}/api-keys /opt/argus \\\n"
-        f"    && chown -R www-data:www-data {_APP_ROOT}\n"
+        "# The SQLite data dir and the pairing dir are runtime volumes; create them\n"
+        "# owned by www-data in the image so a fresh volume inherits that ownership.\n"
+        "# Both the seed (init) and the web server run as www-data, so the SQLite DB\n"
+        "# they create stays writable (root-owned files would make it read-only).\n"
+        f"RUN mkdir -p {_APP_ROOT}/data {_APP_ROOT}/api-keys /opt/argus /pairing \\\n"
+        f"    && chown -R www-data:www-data {_APP_ROOT} /pairing\n"
         f"COPY seed-cashupay.php {_SEED_PATH}\n"
     ).replace("$APP_ROOT", _APP_ROOT)
 
@@ -194,8 +206,11 @@ try {
     }
 
     // Ensure exactly one WooCommerce API key; reuse the existing pairing when the
-    // key it names still exists (raw keys can't be re-derived once created).
-    @mkdir(dirname($pairing), 0700, true);
+    // key it names still exists (raw keys can't be re-derived once created). The
+    // pairing dir/file must be readable by the WooCommerce init (a different uid),
+    // so they are group/other-readable on this internal-only volume.
+    @mkdir(dirname($pairing), 0755, true);
+    @chmod(dirname($pairing), 0755);
     $needNew = true;
     if (is_file($pairing)) {
         $p = json_decode((string)file_get_contents($pairing), true);
@@ -219,14 +234,20 @@ try {
         $key = Auth::createApiKey($storeId, $apiLabel, $perms);
         $raw = is_array($key) ? ($key['key'] ?? ($key['api_key'] ?? '')) : '';
         if ($raw === '') { exit(seed_fail('createApiKey returned no raw key')); }
-        file_put_contents($pairing, json_encode([
+        @unlink($pairing);  // drop any stale file so a re-key always rewrites it
+        if (file_put_contents($pairing, json_encode([
             'store_id'   => $storeId,
             'api_key'    => $raw,
             'created_at' => time(),
-        ]));
-        @chmod($pairing, 0600);
+        ])) === false) {
+            exit(seed_fail("could not write pairing file at $pairing"));
+        }
+        @chmod($pairing, 0644);
         seed_log('created API key + wrote pairing file.');
     }
+    // Always ensure the pairing is readable by the WooCommerce init (a different
+    // uid) — including the reuse path above, which doesn't rewrite the file.
+    @chmod($pairing, 0644);
 
     seed_log('done.');
     exit(0);

@@ -131,7 +131,8 @@ class GlobalConfig(_Base):
     cashupayserver_ref: str = "main"
     # The WooCommerce storefront runs on the official WordPress images; the
     # WP-CLI image drives the (idempotent) provisioning.
-    wordpress_image: str = "wordpress:6.7.1-php8.3-apache"
+    # WordPress >= 6.9 is required by current WooCommerce releases.
+    wordpress_image: str = "wordpress:6.9.4-php8.3-apache"
     wordpress_cli_image: str = "wordpress:cli-php8.3"
     # WooCommerce + the BTCPay-for-WooCommerce plugin are installed at provision
     # time via WP-CLI. Empty => the latest from wordpress.org (fine for testnets);

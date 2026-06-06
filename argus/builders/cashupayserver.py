@@ -56,6 +56,9 @@ def build_cashupayserver(ctx: BuildContext) -> Fragment:
         "image": CASHUPAYSERVER_IMAGE,
         "container_name": f"{ctx.project}-cashupayserver-init",
         "restart": "no",
+        # Seed as www-data (uid 33) so the SQLite DB + pairing it writes are owned
+        # by the same user the Apache web server runs as (else the DB is read-only).
+        "user": "33:33",
         "entrypoint": ["php", "/opt/argus/seed-cashupay.php"],
         "environment": {
             "CASHUPAY_ADMIN_PASSWORD": "${CASHUPAYSERVER_ADMIN_PASSWORD}",
