@@ -135,9 +135,11 @@ def test_miner_on_non_mineable_network_is_noop():
     assert cfg.networks["mutinynet"].miner.enabled
 
 
-def test_secondary_and_channels_default_on_for_mined_nets():
+def test_ring_defaults_on_for_every_network():
     from argus.constants import NETWORK_SPECS
 
+    # The liquidity ring (3 nodes + channels + rebalancer) defaults on everywhere.
+    # Mineable nets self-fund by mining (funding=auto); others fund externally.
     cfg = validated(make({
         "regtest": {"enabled": True, "bitcart": BITCART_OFF},
         "custom-signet": {"enabled": True, "bitcart": BITCART_OFF},
@@ -146,44 +148,75 @@ def test_secondary_and_channels_default_on_for_mined_nets():
     for key in ("regtest", "custom-signet"):
         net, spec = cfg.networks[key], NETWORK_SPECS[key]
         assert net.lnd_secondary_enabled(spec)
+        assert net.lnd_tertiary_enabled(spec)
         assert net.lnd_channels_enabled(spec)
+        assert net.lnd_rebalancer_enabled(spec)
+        assert net.lnd_funding_mode(spec) == "auto"
         assert net.lnd_wumbo_enabled(spec)  # 10 BTC channels force wumbo on
-    # Public signet: not a network Argus mines => feature off.
+    # Public signet: ring is still on, but funded externally (no mining there).
     net, spec = cfg.networks["signet"], NETWORK_SPECS["signet"]
-    assert not net.lnd_secondary_enabled(spec)
-    assert not net.lnd_channels_enabled(spec)
+    assert net.lnd_secondary_enabled(spec)
+    assert net.lnd_tertiary_enabled(spec)
+    assert net.lnd_channels_enabled(spec)
+    assert net.lnd_funding_mode(spec) == "external"
 
 
-def test_disabling_miner_opts_out_without_error():
+def test_disabling_miner_switches_funding_to_external():
     from argus.constants import NETWORK_SPECS
 
-    # No miner => the auto feature defaults off (no validation error).
+    # No miner on a mineable net => the ring stays on but can't self-fund, so the
+    # funding mode falls back to external (still valid — no error).
     cfg = validated(make({"regtest": {
         "enabled": True, "miner": {"enabled": False}, "bitcart": BITCART_OFF}}))
     net, spec = cfg.networks["regtest"], NETWORK_SPECS["regtest"]
-    assert not net.lnd_secondary_enabled(spec)
-    assert not net.lnd_channels_enabled(spec)
+    assert net.lnd_channels_enabled(spec)
+    assert net.lnd_funding_mode(spec) == "external"
 
 
-def test_secondary_rejected_on_non_mined_net():
-    with pytest.raises(ConfigError, match="only supported on networks Argus mines"):
-        validated(make({"signet": {
-            "enabled": True, "bitcart": BITCART_OFF,
-            "lnd": {"secondary": {"enabled": True}}}}))
+def test_secondary_allowed_on_non_mined_net():
+    from argus.constants import NETWORK_SPECS
+
+    # The ring spans every network now, so the extra nodes are allowed off-chain
+    # nets too (funded externally).
+    cfg = validated(make({"signet": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "lnd": {"secondary": {"enabled": True}}}}))
+    net, spec = cfg.networks["signet"], NETWORK_SPECS["signet"]
+    assert net.lnd_secondary_enabled(spec)
 
 
-def test_channels_require_secondary():
-    with pytest.raises(ConfigError, match="requires lnd.secondary"):
+def test_ring_requires_all_three_nodes():
+    with pytest.raises(ConfigError, match="needs all three nodes"):
         validated(make({"regtest": {
             "enabled": True, "bitcart": BITCART_OFF,
-            "lnd": {"secondary": {"enabled": False}, "channels": {"enabled": True}}}}))
+            "lnd": {"tertiary": {"enabled": False}, "channels": {"enabled": True}}}}))
 
 
-def test_explicit_channels_require_miner():
-    with pytest.raises(ConfigError, match="requires the miner"):
+def test_auto_funding_requires_miner():
+    # Explicitly asking for auto funding without a miner to drive it is rejected.
+    with pytest.raises(ConfigError, match="funding='auto'"):
         validated(make({"regtest": {
             "enabled": True, "bitcart": BITCART_OFF, "miner": {"enabled": False},
-            "lnd": {"channels": {"enabled": True}}}}))
+            "lnd": {"channels": {"enabled": True, "funding": "auto"}}}}))
+
+
+def test_external_funding_valid_without_miner():
+    from argus.constants import NETWORK_SPECS
+
+    # External funding needs no miner — valid on a non-mineable net.
+    cfg = validated(make({"signet": {
+        "enabled": True, "bitcart": BITCART_OFF,
+        "lnd": {"channels": {"enabled": True, "funding": "external"}}}}))
+    net, spec = cfg.networks["signet"], NETWORK_SPECS["signet"]
+    assert net.lnd_funding_mode(spec) == "external"
+
+
+def test_rebalancer_band_validated():
+    # Sub-model invariant => pydantic ValidationError (not the semantic ConfigError).
+    with pytest.raises(Exception, match="low_ratio"):
+        validated(make({"regtest": {
+            "enabled": True, "bitcart": BITCART_OFF,
+            "lnd": {"channels": {"rebalancer": {"low_ratio": 0.7, "high_ratio": 0.4}}}}}))
 
 
 def test_channel_btc_cannot_exceed_fund_btc():

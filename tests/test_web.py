@@ -86,6 +86,9 @@ def test_web_contact_email_validated(bad):
         ("argus-signet-lnd", ("signet", "lnd")),
         ("argus-regtest-lnd2", ("regtest", "lnd2")),  # second node, own bucket
         ("argus-regtest-lnd2-nodeinfo", ("regtest", "lnd2")),
+        ("argus-regtest-lnd3", ("regtest", "lnd3")),  # third node, own bucket
+        ("argus-regtest-lnd3-nodeinfo", ("regtest", "lnd3")),
+        ("argus-regtest-lnd-rebalancer", ("regtest", "lnd")),  # ring rebalancer
         ("argus-regtest-lnd-setup", ("regtest", "lnd")),  # funding sidecar
         ("argus-signet-fulcrum-1", ("signet", "fulcrum")),
         ("argus-regtest-mempool-db", ("regtest", "mempool")),
@@ -360,6 +363,60 @@ def test_second_lnd_node_rows_and_uris():
     assert any(pk1 in a.command for a in connects)
     assert any(pk2 in a.command for a in connects)
     assert pk1 in connects[0].command  # argus1 at the top
+
+
+def test_third_lnd_node_row_and_uri():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    port_map = allocate(cfg)
+    pk1, pk2, pk3 = "02" + "ab" * 32, "03" + "cd" * 32, "02" + "ef" * 32
+    metrics = {"usage": {}, "host": {},
+               "lnd": {"regtest": pk1}, "lnd2": {"regtest": pk2},
+               "lnd3": {"regtest": pk3}}
+    section = next(s for s in build_sections(cfg, port_map, metrics) if s.key == "regtest")
+    buckets = [s.bucket for s in section.services]
+    assert "lnd3" in buckets
+    connects = [a for a in section.attach if "lncli connect" in a.command]
+    assert any(pk3 in a.command for a in connects)
+
+
+def test_liquidity_panel_from_metrics():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    port_map = allocate(cfg)
+    metrics = {
+        "usage": {}, "host": {},
+        "liquidity": {"regtest": {
+            "lnd": {"address": "bcrt1qaaa", "onchain_confirmed": 1500000000,
+                    "onchain_unconfirmed": 0, "channel_outbound_sat": 500000000,
+                    "channel_inbound_sat": 500000000, "num_channels": 2,
+                    "num_active_channels": 2},
+            "lnd2": {"address": "bcrt1qbbb", "onchain_confirmed": 1500000000,
+                     "onchain_unconfirmed": 0, "channel_outbound_sat": 400000000,
+                     "channel_inbound_sat": 600000000, "num_channels": 2,
+                     "num_active_channels": 2},
+            "lnd3": {"address": "bcrt1qccc", "onchain_confirmed": 1500000000,
+                     "onchain_unconfirmed": 0, "channel_outbound_sat": 600000000,
+                     "channel_inbound_sat": 400000000, "num_channels": 2,
+                     "num_active_channels": 2},
+        }},
+    }
+    section = next(s for s in build_sections(cfg, port_map, metrics) if s.key == "regtest")
+    assert [n.label for n in section.liquidity] == ["argus1", "argus2", "argus3"]
+    assert [n.address for n in section.liquidity] == ["bcrt1qaaa", "bcrt1qbbb", "bcrt1qccc"]
+    # 5 + 4 + 6 BTC outbound, 5 + 6 + 4 BTC inbound across the ring.
+    assert section.liquidity[0].onchain_btc == "15"
+    assert section.liquidity_outbound_btc == "15"
+    assert section.liquidity_inbound_btc == "15"
+
+
+def test_liquidity_panel_empty_without_snapshot():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    port_map = allocate(cfg)
+    section = next(
+        s for s in build_sections(cfg, port_map, {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    # Rows still built (one per ring node) but with empty addresses => panel hidden.
+    assert all(n.address == "" for n in section.liquidity)
 
 
 def test_regtest_mining_recipe_present_and_gated():

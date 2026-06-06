@@ -79,6 +79,23 @@ class DonationRow:
 
 
 @dataclass
+class LiquidityNode:
+    """One LND node's row in the operator "add liquidity" panel: where to deposit
+    on-chain coins, the current on-chain balance, and the channel liquidity it
+    holds in each direction (outbound = can send, inbound = can receive). All BTC
+    figures are pre-formatted strings; ``address`` is "" until the node reports."""
+
+    label: str
+    address: str
+    onchain_btc: str
+    onchain_pending_btc: str
+    outbound_btc: str
+    inbound_btc: str
+    num_channels: int
+    num_active_channels: int
+
+
+@dataclass
 class ResetInfo:
     """The auto-reset countdown for one network's section.
 
@@ -110,11 +127,63 @@ class NetworkSection:
     ram_total: int = 0
     disk_total: int = 0
     reset: ResetInfo | None = None
+    # Per-node liquidity rows for the operator "add liquidity" panel (empty until
+    # the nodes report a snapshot) + network totals (pre-formatted BTC strings).
+    liquidity: list[LiquidityNode] = field(default_factory=list)
+    liquidity_outbound_btc: str = "0"
+    liquidity_inbound_btc: str = "0"
 
 
 def _url(cfg: ArgusConfig, service_ssl: bool, port: int) -> str:
     scheme = "https" if (cfg.global_.ssl_enabled and service_ssl) else "http"
     return f"{scheme}://{cfg.global_.hostname}:{port}/"
+
+
+def _sat_to_btc(sat: int) -> str:
+    """Format integer satoshis as a compact BTC string (trailing zeros trimmed)."""
+    s = f"{sat / 1e8:.8f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
+def _as_int(value) -> int:
+    """Coerce a JSON scalar (the sidecar writes numbers; be defensive) to int."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _liquidity_nodes(
+    cfg: ArgusConfig, net_key: str, metrics: dict, labels: list[tuple[str, str]]
+) -> tuple[list[LiquidityNode], int, int]:
+    """Build the operator liquidity rows for a network from the metrics snapshot.
+
+    ``labels`` maps each present compose service ("lnd"/"lnd2"/"lnd3") to its
+    display alias. Returns the rows plus total outbound/inbound satoshis."""
+    snaps = (metrics.get("liquidity") or {}).get(net_key) or {}
+    nodes: list[LiquidityNode] = []
+    tot_out = tot_in = 0
+    for service, label in labels:
+        snap = snaps.get(service) or {}
+        out_sat = _as_int(snap.get("channel_outbound_sat"))
+        in_sat = _as_int(snap.get("channel_inbound_sat"))
+        tot_out += out_sat
+        tot_in += in_sat
+        nodes.append(
+            LiquidityNode(
+                label=label,
+                address=str(snap.get("address") or ""),
+                onchain_btc=_sat_to_btc(_as_int(snap.get("onchain_confirmed"))),
+                onchain_pending_btc=_sat_to_btc(
+                    _as_int(snap.get("onchain_unconfirmed"))
+                ),
+                outbound_btc=_sat_to_btc(out_sat),
+                inbound_btc=_sat_to_btc(in_sat),
+                num_channels=_as_int(snap.get("num_channels")),
+                num_active_channels=_as_int(snap.get("num_active_channels")),
+            )
+        )
+    return nodes, tot_out, tot_in
 
 
 def _usage(metrics: dict, net_key: str, bucket: str) -> tuple[int | None, int | None]:
@@ -206,6 +275,12 @@ def _service_rows(
             "lnd2", f"LND ({net.lnd.secondary.name})",
             "lnd2_p2p", "lnd2_rest", "lnd2_grpc",
             (metrics.get("lnd2") or {}).get(net_key),
+        )
+    if net.lnd_tertiary_enabled(spec):
+        lnd_row(
+            "lnd3", f"LND ({net.lnd.tertiary.name})",
+            "lnd3_p2p", "lnd3_rest", "lnd3_grpc",
+            (metrics.get("lnd3") or {}).get(net_key),
         )
 
     # The faucet (a separate container, path-routed at /<net>/faucet on the site
@@ -432,6 +507,10 @@ def build_sections(
                 pk2 = (metrics.get("lnd2") or {}).get(net_key)
                 if pk2:
                     uris.append((net.lnd.secondary.name, pk2, ports["lnd2_p2p"]))
+            if net.lnd_tertiary_enabled(spec):
+                pk3 = (metrics.get("lnd3") or {}).get(net_key)
+                if pk3:
+                    uris.append((net.lnd.tertiary.name, pk3, ports["lnd3_p2p"]))
             for label, pk, p2p in reversed(uris):
                 uri = f"{pk}@{cfg.global_.hostname}:{p2p}"
                 # Clearnet connect line, with the onion connect (when Tor is on)
@@ -448,5 +527,20 @@ def build_sections(
                     audience="visitor",
                     command_onion=onion_cmd,
                 ))
+
+            # Operator "add liquidity" panel: deposit addresses + balances per node.
+            labels: list[tuple[str, str]] = [
+                ("lnd", net.lnd.name or (
+                    "argus1" if spec.supports_miner else f"argus-{net_key}"
+                ))
+            ]
+            if net.lnd_secondary_enabled(spec):
+                labels.append(("lnd2", net.lnd.secondary.name))
+            if net.lnd_tertiary_enabled(spec):
+                labels.append(("lnd3", net.lnd.tertiary.name))
+            nodes, tot_out, tot_in = _liquidity_nodes(cfg, net_key, metrics, labels)
+            section.liquidity = nodes
+            section.liquidity_outbound_btc = _sat_to_btc(tot_out)
+            section.liquidity_inbound_btc = _sat_to_btc(tot_in)
         sections.append(section)
     return sections

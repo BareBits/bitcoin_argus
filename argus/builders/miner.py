@@ -43,7 +43,7 @@ def _initial_blocks(ctx: BuildContext) -> int:
     configured = ctx.net.miner.initial_blocks
     if not ctx.net.lnd_channels_enabled(ctx.spec):
         return configured
-    need_btc = 2 * ctx.net.lnd.channels.fund_btc + LND_CHANNEL_CORE_RESERVE_BTC
+    need_btc = 3 * ctx.net.lnd.channels.fund_btc + LND_CHANNEL_CORE_RESERVE_BTC
     coinbases = math.ceil(need_btc / EARLY_BLOCK_SUBSIDY_BTC)
     funding_min = COINBASE_MATURITY + coinbases + 3  # +3 margin
     return max(configured, funding_min)

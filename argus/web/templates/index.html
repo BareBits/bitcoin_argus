@@ -35,6 +35,18 @@
   .net-donate { margin-top: 1.3rem; }
   .net-donate .donate-table th { text-align: left; white-space: nowrap; }
   .donate-ln { margin-top: 0.25rem; }
+  /* Operator "add liquidity" panel. Colours inherit from the active theme. */
+  .liq-title { margin: 1.2rem 0 0.2rem; }
+  .liq-intro { margin: 0 0 0.8rem; opacity: 0.9; }
+  .liq-net .liq-tot { font-weight: normal; opacity: 0.8; font-size: 0.9em; }
+  .liq-table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+  .liq-table th, .liq-table td {
+    text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid currentColor;
+    border-color: rgba(127,127,127,0.3); vertical-align: top;
+  }
+  .liq-table th { white-space: nowrap; opacity: 0.8; }
+  .liq-addr { word-break: break-all; font-size: 0.95em; }
+  .liq-pending { opacity: 0.6; }
   {% for s in sections %}
   #nettab-{{ s.key }}:checked ~ .net-panels #netpanel-{{ s.key }} { display: block; }
   {% endfor %}
@@ -366,9 +378,9 @@
   {% endif %}
 </details>
 
-{% set ns = namespace(any=false, note='') %}
-{% for s in sections %}{% for a in s.attach if a.audience == 'operator' %}{% set ns.any = true %}{% if not ns.note and a.note %}{% set ns.note = a.note %}{% endif %}{% endfor %}{% endfor %}
-{% if ns.any %}
+{% set ns = namespace(any=false, anyliq=false, note='') %}
+{% for s in sections %}{% for a in s.attach if a.audience == 'operator' %}{% set ns.any = true %}{% if not ns.note and a.note %}{% set ns.note = a.note %}{% endif %}{% endfor %}{% if s.liquidity|selectattr('address')|list %}{% set ns.anyliq = true %}{% endif %}{% endfor %}
+{% if ns.any or ns.anyliq %}
 <details class="host-totals operator-only">
   <summary><span class="caret"></span><h2>🔧 Operator only</h2></summary>
   <p>
@@ -391,6 +403,47 @@
   {% endif %}
   {% endfor %}
   {% if ns.note %}<div class="attach-note">{{ ns.note }}</div>{% endif %}
+
+  {% if ns.anyliq %}
+  <h3 class="liq-title">⚡ Add liquidity to your LND liquidity pool</h3>
+  <p class="liq-intro">
+    Each network runs a three-node Lightning <strong>ring</strong> that rebalances
+    itself off-chain, so it keeps liquidity in both directions without Loop/Boltz.
+    To grow the pool, send on-chain coins to a node's deposit address below — the
+    ring opens/keeps channels and the rebalancer evens them out.
+    <strong>Outbound</strong> = the node can send; <strong>inbound</strong> = it
+    can receive.
+  </p>
+  {% for s in sections %}
+  {% if s.liquidity|selectattr('address')|list %}
+  <div class="operator-net liq-net">
+    <h4>{{ s.title }}
+      <span class="liq-tot">— pool: outbound {{ s.liquidity_outbound_btc }} BTC /
+      inbound {{ s.liquidity_inbound_btc }} BTC</span></h4>
+    <table class="liq-table">
+      <thead><tr>
+        <th>Node</th><th>On-chain</th><th>Outbound</th><th>Inbound</th>
+        <th>Active</th><th>Deposit address (on-chain)</th>
+      </tr></thead>
+      <tbody>
+      {% for n in s.liquidity %}
+        <tr>
+          <td>{{ n.label }}</td>
+          <td>{{ n.onchain_btc }}{% if n.onchain_pending_btc != '0' %}
+              <span class="liq-pending">(+{{ n.onchain_pending_btc }})</span>{% endif %}</td>
+          <td>{{ n.outbound_btc }}</td>
+          <td>{{ n.inbound_btc }}</td>
+          <td>{{ n.num_active_channels }}/{{ n.num_channels }}</td>
+          <td>{% if n.address %}<code class="liq-addr">{{ n.address }}</code>
+              {% else %}<span class="liq-pending">pending…</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% endif %}
 </details>
 {% endif %}
 {% endblock %}

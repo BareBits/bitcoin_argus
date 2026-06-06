@@ -15,7 +15,7 @@ that network.
 | Service | Purpose | Internet exposure |
 | --- | --- | --- |
 | **bitcoind** (Knots for mutinynet) | The Bitcoin node | RPC/ZMQ closed (loopback/internal only) |
-| **LND** (`argus1`, + `argus2` on mined nets) | Lightning node(s); on regtest/custom-signet two nodes are auto-funded and wired with channels | P2P open; gRPC/REST closed |
+| **LND** (`argus1`/`argus2`/`argus3`) | Lightning node ring; three nodes auto-funded and wired into a self-rebalancing liquidity ring (see below) | P2P open; gRPC/REST closed |
 | **Fulcrum** (≥1) | Electrum server for light wallets + mempool backend | Electrum port open |
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
@@ -111,12 +111,35 @@ cd generated/reset && ARGUS_DEPLOY_ROOT="$(cd .. && pwd)" docker compose up -d -
 > slightly-out-of-order `up` self-corrects rather than crash-looping — but
 > starting Tor first avoids the wait entirely.
 
-On **regtest**, two LND nodes (`argus1` + `argus2`) come up, get funded 25 BTC
-each, and open a 10 BTC channel to each other. bitcoind keeps its P2P (mining)
-port closed until that channel setup completes — so the funding can't be reorged
-out from under us — then **reopens it automatically**. Once open, anyone can
-attach a regtest node and mine (see the recipe on the dashboard). Disable with
-`lnd.secondary.enabled: false` / `lnd.channels.enabled: false`.
+### Lightning liquidity ring
+
+By default every network runs a **three-node Lightning liquidity ring** —
+`argus1` → `argus2` → `argus3` → `argus1` — so the nodes always have liquidity in
+**both** directions to route payments. Each node opens one single-funded
+`channel_btc` (default 10 BTC) channel to the next hop, then a one-shot **circular
+self-payment** brings every channel to ~50/50, and a long-running **rebalancer**
+keeps them in the 35–65% band. This is pure off-chain rebalancing: a triangle is
+the smallest graph in which a node can move liquidity between channels to
+*different* peers, so it can restore its own inbound/outbound balance with **no
+swap provider** (Loop/Boltz) — which is what makes it work on every testnet.
+
+Funding has two modes (`lnd.channels.funding`):
+
+- **`auto`** (default on networks Argus mines — regtest/custom-signet): the nodes
+  are funded `fund_btc` (default 25 BTC) each by mining. On **regtest** bitcoind
+  keeps its P2P (mining) port closed until ring setup completes — so the funding
+  can't be reorged out from under us — then **reopens it automatically**.
+- **`external`** (default elsewhere — testnet3/4, signet, mutinynet): Argus can't
+  mine coins there, so it waits for coins you send to each node's on-chain
+  address. The dashboard's **Operator-only → "Add liquidity to your LND liquidity
+  pool"** panel shows each node's deposit address, on-chain balance, and channel
+  inbound/outbound totals; send (e.g. from a public faucet) `>= channel_btc` to
+  each, and the ring forms automatically.
+
+Tunables live under `lnd.channels` (`funding`, `fund_btc`, `channel_btc`,
+`rebalancer: { enabled, interval_seconds, low_ratio, high_ratio, max_fee_sat }`).
+Disable the ring on a network with `lnd.channels.enabled: false` (or drop a node
+with `lnd.secondary.enabled` / `lnd.tertiary.enabled: false`).
 
 > When the set of Caddy sites/ports changes, **restart the Caddy container**
 > (`docker restart argus-caddy`) — a hot `caddy reload` won't bind new
@@ -332,25 +355,25 @@ onion-native — some of its pages build absolute clearnet links.)
 
 ### The two LND nodes under Tor (inbound vs. dialing out)
 
-A subtlety worth knowing on the two-node (mined) networks: **being reachable over
-Tor and *using* Tor to dial out are separate things.** When `tor.active` is on,
-LND routes outbound connections — including bare hostnames — through the SOCKS
-proxy to avoid DNS leaks; it can't reach a private Docker hostname that way, only
-`.onion` and direct-IP targets. So Argus splits the roles:
+A subtlety worth knowing about the node ring: **being reachable over Tor and
+*using* Tor to dial out are separate things.** When `tor.active` is on, LND routes
+outbound connections — including bare hostnames — through the SOCKS proxy to avoid
+DNS leaks; it can't reach a private Docker hostname that way, only `.onion` and
+direct-IP targets. So Argus splits the roles across the ring:
 
-- **`argus1` (primary)** runs **clearnet-only outbound** (no `tor.active`). It
-  still advertises the onion, so anyone can connect to it over Tor — it just
-  can't *initiate* connections to `.onion`-only peers. Use it for everyday work:
-  its outbound connectivity is direct and reliable.
-- **`argus2` (secondary)** runs in **Tor mode** (`tor.active`). Use it when you
-  want to **open a channel out to a node that's only reachable over Tor**.
+- **`argus1` + `argus3`** run **clearnet-only outbound** (no `tor.active`). They
+  still advertise the onion, so anyone can connect to them over Tor — they just
+  can't *initiate* connections to `.onion`-only peers. Use them for everyday work:
+  their outbound connectivity is direct and reliable.
+- **`argus2`** runs in **Tor mode** (`tor.active`). Use it when you want to **open
+  a channel out to a node that's only reachable over Tor**.
 
 Regardless of these settings, **any other node — over Tor or clearnet — can
-connect to and open a channel with either of our nodes**; the Tor restriction
-only governs *dialing out*. (The auto-channel sidecar connects the two nodes by
-resolved container **IP** for exactly this reason — a hostname would be sent
-through Tor by `argus2` and fail.) If you don't run Tor, both nodes are plain
-clearnet and this distinction doesn't apply.
+connect to and open a channel with any of our nodes**; the Tor restriction only
+governs *dialing out*. (The ring sidecar connects the nodes by resolved container
+**IP** for exactly this reason — a hostname would be sent through Tor by `argus2`
+and fail.) If you don't run Tor, all three nodes are plain clearnet and this
+distinction doesn't apply.
 
 `global.tor` toggles `expose_web` / `expose_electrum` / `expose_lnd_p2p` /
 `expose_bitcoind_p2p` narrow the surface without disabling Tor; `image` overrides
