@@ -280,6 +280,7 @@ SUBTOOL_REPO: dict[str, str] = {
     "fulcrum": "https://github.com/cculianu/Fulcrum",
     "cashu": "https://github.com/cashubtc/nutshell",
     "cashu_wallet": "https://github.com/cashubtc/cashu.me",
+    "fedimint": "https://github.com/fedimint/fedimint",
     "mempool": "https://github.com/mempool/mempool",
     "bitcart": "https://github.com/BareBits/bitcart",
     "cashupayserver": "https://github.com/BareBits/cashupayserver",

@@ -385,6 +385,40 @@ def _service_rows(
                 )
             )
 
+    # Fedimint federation (guardians) + a Lightning gateway per ring node. Each
+    # gateway rides the LND node it is paired with, so its row names that node
+    # (gateway i -> argus_i) — the federation's Lightning liquidity is that node's.
+    if net.fedimint_enabled(spec):
+        n = net.fedimint_guardian_count(spec)
+        lnd_names = [name1, net.lnd.secondary.name, net.lnd.tertiary.name]
+        for i in range(n):
+            num = "" if n == 1 else f" {i + 1}"
+            rows.append(
+                row(
+                    f"Fedimint guardian{num}",
+                    "fedimintd" if i == 0 else f"fedimintd{i + 1}",
+                    ports=[
+                        PortRef("API", ports[f"fedimintd_{i}_api_public"], public=True),
+                        PortRef("UI", ports[f"fedimintd_{i}_ui"], public=False),
+                    ],
+                    version=image_version(g.fedimintd_image) or None,
+                    repo_url=SUBTOOL_REPO["fedimint"],
+                )
+            )
+        for i in range(n):
+            rows.append(
+                row(
+                    f"Fedimint gateway ({lnd_names[i]})",
+                    "gatewayd" if i == 0 else f"gatewayd{i + 1}",
+                    ports=[PortRef("API", ports[f"gatewayd_{i}_api_public"], public=True)],
+                    links=[
+                        link("Gateway UI", g.ssl_enabled, ports[f"gatewayd_{i}_api_public"])
+                    ],
+                    version=image_version(g.gatewayd_image) or None,
+                    repo_url=SUBTOOL_REPO["fedimint"],
+                )
+            )
+
     # mempool explorer.
     if net.mempool_enabled(spec):
         rows.append(

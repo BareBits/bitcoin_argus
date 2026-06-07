@@ -210,6 +210,34 @@ def test_firewall_opens_public_apis(tmp_path):
     assert "ufw allow 30521/tcp" in fw and "gateway0 api" in fw
 
 
+def test_dashboard_lists_fedimint_with_backing_lnd():
+    from argus.web.inventory import build_sections
+
+    cfg = validated(make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"guardians": 3}}}))
+    rt = next(s for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+              if s.key == "regtest")
+    names = [s.name for s in rt.services]
+    assert "Fedimint guardian 1" in names
+    # The gateway rows name the LND node backing each (gateway i -> argus_i).
+    for nm in ("Fedimint gateway (argus1)", "Fedimint gateway (argus2)",
+               "Fedimint gateway (argus3)"):
+        assert nm in names
+    gw = next(s for s in rt.services if s.name == "Fedimint gateway (argus1)")
+    assert gw.audience == "Visitor" and gw.links  # public API + a Gateway UI link
+
+
+def test_dashboard_single_guardian_unnumbered():
+    from argus.web.inventory import build_sections
+
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    rt = next(s for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+              if s.key == "regtest")
+    names = [s.name for s in rt.services]
+    assert "Fedimint guardian" in names  # no number when there is just one
+    assert "Fedimint gateway (argus1)" in names
+
+
 def test_secrets_persisted(tmp_path):
     _, sec = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     env = (sec / "regtest" / "secrets.env").read_text()
