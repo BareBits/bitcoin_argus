@@ -179,9 +179,10 @@ gateway per ring node**. On by default; configure under `fedimint`.
   shared Caddy (`wss://`), so a wallet can join the federation via the invite code
   and move sats in/out over Lightning.
 - **Funding the ecash float** (`fedimint.gateway.float_btc`, default 0.5 BTC per
-  gateway) mirrors the ring's split: **mined** on auto-funded nets; on
-  external-funded nets the `fedimint-gateways` sidecar surfaces each gateway's
-  **ecash peg-in address** for you (or a faucet) to send to.
+  gateway): the `fedimint-gateways` sidecar pegs it in from each gateway's **own
+  on-chain wallet** (its ring-funded LND node) — get a federation peg-in address,
+  send to it, then recheck to claim. So the float is funded automatically and
+  identically on every network, mined or not, with no separate funding wallet.
 - **Auto-disable guard:** Fedimint is skipped (with a generation-time warning) on
   any network whose chain it can't run on. Every chain Argus ships today is
   supported — the custom signets and mutinynet run as `signet`, testnet3 as

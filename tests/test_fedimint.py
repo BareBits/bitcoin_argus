@@ -122,22 +122,30 @@ def test_fedimint_port_offsets():
 # --- generation --------------------------------------------------------------
 
 
-def test_auto_funded_network_has_fund_sidecar(tmp_path):
+def test_core_services_present(tmp_path):
     out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
     c = _compose(out, "regtest")
-    assert {"fedimintd", "gatewayd", "fedimint-setup", "fedimint-gateways",
-            "fedimint-fund"} <= set(c["services"])
-    fund = c["services"]["fedimint-fund"]["environment"]
-    assert fund["CAN_MINE"] == "1" and fund["FUNDING_WALLET"] == "miner"
+    assert {"fedimintd", "gatewayd", "fedimint-setup", "fedimint-gateways"} <= set(c["services"])
 
 
-def test_external_funded_network_skips_fund_sidecar(tmp_path):
-    # Public signet isn't mined by Argus => external funding => no fund sidecar,
-    # but the federation + gateways are still deployed.
-    out, _ = _gen(tmp_path, make({"signet": {"enabled": True, "bitcart": BITCART_OFF}}))
-    services = set(_compose(out, "signet")["services"])
-    assert {"fedimintd", "gatewayd", "fedimint-setup", "fedimint-gateways"} <= services
-    assert "fedimint-fund" not in services
+def test_float_funded_from_gateway_onchain_all_networks(tmp_path):
+    # Funding pegs the ecash float in from each gateway's own (ring-funded) LND
+    # on-chain wallet via pegin-from-onchain, so it's identical on mined (regtest)
+    # and non-mined (signet) networks -- no separate bitcoind fund sidecar, no
+    # auto/external split.
+    for net in ("regtest", "signet"):
+        d = tmp_path / net
+        d.mkdir()
+        out, _ = _gen(d, make({net: {"enabled": True, "bitcart": BITCART_OFF}}))
+        c = _compose(out, net)
+        assert "fedimint-fund" not in c["services"]
+        gw = c["services"]["fedimint-gateways"]["environment"]
+        assert gw["FLOAT_MSAT"] == "50000000000"  # 0.5 BTC default, in msats
+        script = (out / net / "fedimint" / "gateways.sh").read_text()
+        # float from the gateway's own on-chain wallet: get a peg-in address, send
+        # to it, then recheck to claim (deposits are not auto-claimed).
+        assert "onchain send" in script and "pegin-recheck" in script
+        assert "/ui/wallet/create" in script  # creates the gateway wallet/mnemonic
 
 
 def test_guardian_wiring(tmp_path):
@@ -158,9 +166,15 @@ def test_gateway_wiring(tmp_path):
     assert env["FM_GATEWAY_LIGHTNING_MODULE_MODE"] == "LNv1"
     assert env["FM_LND_RPC_ADDR"] == "https://lnd:10009"
     assert env["FM_LND_MACAROON"] == "/lnd/data/chain/bitcoin/regtest/admin.macaroon"
+    # gatewayd requires a Bitcoin backend even in LND mode.
+    assert env["FM_BITCOIND_URL"] == "http://bitcoind:18443"
     assert "lnd_data:/lnd:ro" in gw["volumes"]
-    # bcrypt hash is derived at runtime by the entrypoint (no plaintext leak).
-    assert any("create-password-hash" in part for part in gw["entrypoint"])
+    # bcrypt hash is derived at runtime by a mounted entry script (no plaintext
+    # leak, and no Compose $-interpolation of the shell vars).
+    assert gw["entrypoint"] == ["/bin/sh", "/scripts/gateway-entry.sh"]
+    assert any("gateway-entry.sh" in v for v in gw["volumes"])
+    entry = (out / "regtest" / "fedimint" / "gateway-entry.sh").read_text()
+    assert "create-password-hash" in entry and "exec gatewayd lnd" in entry
 
 
 def test_gateway_paired_with_distinct_ring_nodes(tmp_path):

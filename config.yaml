@@ -218,9 +218,9 @@ networks:
 #               # The federation rides the liquidity ring's self-rebalancing
 #               # channels for Lightning, so it needs no extra liquidity machinery
 #               # even on networks Argus can't mine. gateway.float_btc (default 0.5)
-#               # is the ecash float pegged into the federation per gateway, funded
-#               # like the ring: mined on auto-funded nets, an operator/faucet
-#               # deposit (to the surfaced peg-in address) on external-funded ones.
+#               # is the ecash float pegged into the federation per gateway; it is
+#               # pegged in automatically from each gateway's OWN (ring-funded) LND
+#               # on-chain wallet, so funding is identical on every network.
 #               # guardian/gateway passwords are auto-generated to secrets/<net>/.
 #               # NOTE: Fedimint is auto-disabled (with a generation-time warning)
 #               # on any network whose chain it cannot run on. Every chain Argus
