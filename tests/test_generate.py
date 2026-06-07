@@ -73,14 +73,14 @@ def test_regtest_p2p_self_gated_by_default(tmp_path):
 
 
 def test_custom_signet_p2p_not_gated(tmp_path):
-    # Custom-signet is never gated (outsiders can't mine it), so bitcoind uses the
-    # plain image entrypoint (no self-gate wrapper).
+    # Custom-signet is never gated (outsiders can't mine it), so bitcoind runs the
+    # daemon directly (no self-gate wrapper) — entrypoint is the bare bitcoind.
     out, _ = _gen(tmp_path, make({"custom-signet-short": {
         "enabled": True, "bitcart": BITCART_OFF}}))
     compose = yaml.safe_load(_read(out / "custom-signet-short" / "docker-compose.yml"))
     bitcoind = compose["services"]["bitcoind"]
     assert "35000:38333" in bitcoind["ports"]
-    assert "entrypoint" not in bitcoind
+    assert bitcoind["entrypoint"] == ["bitcoind"]
     assert not (out / "open-mining.sh").exists()
 
 

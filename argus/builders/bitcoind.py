@@ -162,6 +162,13 @@ def build_bitcoind(ctx: BuildContext) -> Fragment:
         "image": f"${{{image_var}}}",
         "container_name": f"{ctx.project}-bitcoind",
         "restart": "unless-stopped",
+        # Run bitcoind directly. This bypasses the official bitcoin/bitcoin image's
+        # /entrypoint.sh, which would force its own -datadir (overriding our /data
+        # volume) and drop to an unprivileged user (breaking writes to /data). It
+        # is also correct for lncm/bitcoind (whose entrypoint is bitcoind anyway).
+        # bitcoind runs fine as root in the container; the gated path overrides this
+        # with its wrapper, which likewise execs bitcoind directly.
+        "entrypoint": ["bitcoind"],
         "command": ["-datadir=/data", "-conf=/data/bitcoin.conf"],
         "volumes": volumes,
         "ports": port_maps,

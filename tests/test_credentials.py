@@ -58,10 +58,12 @@ def test_login_url_https_when_ssl_on(tmp_path):
 
 
 def test_no_login_services_yields_no_credentials(tmp_path):
-    # No component with an admin login: Bitcart off, and Fedimint (whose gateway/
-    # guardian UIs are logins) off too.
+    # No component with an admin login (or info row): Bitcart off, Fedimint (whose
+    # gateway/guardian UIs are logins) off, and Ark (an info-only connection row)
+    # off too.
     data = make({"regtest": {
-        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"enabled": False}}})
+        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"enabled": False},
+        "ark": {"enabled": False}}})
     _, sec = _gen(tmp_path, data)
     cfg = validated(data)
     assert build_credentials(cfg, allocate(cfg), sec) == []
@@ -114,7 +116,8 @@ def test_generate_writes_credentials_file_0600(tmp_path):
 
 def test_no_credentials_file_when_no_logins(tmp_path):
     out, _ = _gen(tmp_path, make({"regtest": {
-        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"enabled": False}}}))
+        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"enabled": False},
+        "ark": {"enabled": False}}}))
     assert not (out / "CREDENTIALS.txt").exists()
 
 

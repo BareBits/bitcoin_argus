@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from urllib.parse import quote
 
 from .. import __version__ as ARGUS_VERSION
+from ..ark_cln import ARK_CLN_VERSION
 from ..config import ArgusConfig
 from ..constants import NETWORK_SPECS
 from ..reset import format_reset_eta, seconds_until_reset
@@ -451,6 +452,38 @@ def _service_rows(
                     repo_url=SUBTOOL_REPO["fedimint"],
                 )
             )
+
+    # Ark ASP: the captaind server + its Core Lightning bridge node. The bridge
+    # opens one channel into the ring (default argus1); both are funded externally
+    # via the two on-chain addresses the setup sidecars publish (see the operator
+    # docs / `argus credentials`). captaind's Ark gRPC is fronted publicly (h2c) so
+    # bark wallets can reach it; the CLN bridge's P2P is public (a reachable node).
+    if net.ark_enabled(spec):
+        _ark_target, _ark_svc, _ark_vol = net.ark_channel_target(spec)
+        rows.append(
+            row(
+                "Ark server (captaind)",
+                "captaind",
+                ports=[
+                    PortRef("API", ports["ark_captaind_public"], public=True),
+                    PortRef("admin", ports["ark_captaind_admin"], public=False),
+                ],
+                version=image_version(g.ark_captaind_image) or None,
+                repo_url=SUBTOOL_REPO["ark"],
+            )
+        )
+        rows.append(
+            row(
+                f"Ark Lightning bridge (CLN -> {_ark_target})",
+                "cln",
+                ports=[
+                    PortRef("P2P", ports["ark_cln_p2p"], public=True),
+                    PortRef("gRPC", ports["ark_cln_grpc"], public=False),
+                ],
+                version=ARK_CLN_VERSION,
+                repo_url=SUBTOOL_REPO["ark_cln"],
+            )
+        )
 
     # mempool explorer.
     if net.mempool_enabled(spec):

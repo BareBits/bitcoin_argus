@@ -211,6 +211,17 @@ PORT_OFFSETS: dict[str, int] = {
     "mempool_web": 301,  # frontend loopback (Caddy proxies here)
     "mempool_api": 310,  # backend API loopback (debug)
     "mempool_db": 311,  # reserved; DB is internal-only (not published)
+    # Ark ASP (captaind + its Core Lightning bridge node). The captaind gRPC API
+    # is fronted publicly by the shared Caddy (h2c) so bark wallets can reach it;
+    # the CLN P2P port is public so the bridge is a reachable Lightning node. The
+    # rest are loopback (operator/debug); captaind reaches CLN, and the sidecars
+    # reach captaind/CLN, by service name on the internal compose network.
+    "ark_captaind_public": 600,  # Caddy public listener (h2c -> captaind gRPC)
+    "ark_captaind": 601,  # 127.0.0.1 captaind gRPC backend (Caddy proxies here)
+    "ark_captaind_admin": 602,  # 127.0.0.1 captaind admin RPC (debug)
+    "ark_cln_p2p": 603,  # PUBLIC (the Ark bridge is a reachable LN node)
+    "ark_cln_grpc": 604,  # 127.0.0.1 CLN gRPC (debug)
+    "ark_cln_hold": 605,  # 127.0.0.1 hold-invoice plugin gRPC (debug)
 }
 
 # In-container listen ports for the storefront services (identical across the
@@ -358,3 +369,56 @@ FEDIMINT_GUARDIAN_BASE = 500
 FEDIMINT_GUARDIAN_STRIDE = 4  # api_public, api, ui, (spare)
 FEDIMINT_GATEWAY_BASE = 520
 FEDIMINT_GATEWAY_STRIDE = 2  # api, (spare)
+
+
+# --- Ark ASP (Ark Service Provider) -----------------------------------------
+
+# An Ark server (Second's ``captaind``) plus its Core Lightning bridge node
+# (``cln`` + the Boltz hold-invoice plugin), deployed per network alongside the
+# LND liquidity ring. captaind's wallet seeds Ark VTXOs/rounds; CLN bridges Ark
+# to Lightning and opens ONE channel into the ring (default to ``argus1``), so
+# Ark<->Lightning payments route through the triangle. Both are funded by the
+# operator sending coins to the two on-chain addresses the setup sidecars print
+# (external funding — captaind doesn't create coins, so on a network Argus can't
+# mine the operator/faucet seeds it once).
+
+# captaind's in-container listen ports (identical across the isolated per-network
+# projects; host-facing ports come from the allocator). public = the Ark protocol
+# gRPC bark wallets use; admin = the management RPC ``captaind rpc`` dials.
+CAPTAIND_INTERNAL_PORTS: dict[str, int] = {"public": 3535, "admin": 3536}
+
+# The CLN bridge's in-container listen ports. These match Second's cln_start.sh
+# defaults (and the cert/URI paths baked into captaind's config), so the bridge
+# image is used as-published. p2p = Lightning gossip/channels; grpc = CLN's gRPC;
+# hold = the Boltz hold-invoice plugin's gRPC (captaind drives both gRPCs).
+ARK_CLN_INTERNAL_PORTS: dict[str, int] = {"p2p": 9735, "grpc": 9736, "hold": 9988}
+
+# Map each Argus bitcoind ``chain`` selector to the network name captaind (a
+# rust-bitcoin ``Network``) AND Core Lightning use. The two custom signets and
+# mutinynet all run as ``signet`` (they report ``chain="signet"``), and bitcoind's
+# testnet3 selector ``test`` is ``testnet`` for both tools. This single value also
+# names the CLN data-dir subfolder the gRPC/hold TLS certs live in
+# (``/data/cln/<value>/...``), which captaind's config must point at.
+ARK_NETWORK_KEY: dict[str, str] = {
+    "regtest": "regtest",
+    "test": "testnet",
+    "testnet4": "testnet4",
+    "signet": "signet",
+}
+
+# The chains Ark supports, and the capability guard's source of truth. Every
+# current Argus chain maps to a value captaind + CLN accept, so nothing is
+# excluded today; a future chain whose selector is absent here auto-disables Ark
+# on that network (with a warning) rather than generating a stack that can't run.
+# Keep in sync with ARK_NETWORK_KEY.
+ARK_SUPPORTED_CHAINS: frozenset[str] = frozenset(ARK_NETWORK_KEY)
+
+# The three ring LND nodes an Ark bridge channel can target, mapped to the LND
+# service name and its data volume (which the channel sidecar mounts read-only to
+# read the target's identity pubkey from argus_liquidity.json). Mirrors the ring
+# ordering in argus.builders.lnd.
+ARK_RING_NODES: dict[str, tuple[str, str]] = {
+    "argus1": ("lnd", "lnd_data"),
+    "argus2": ("lnd2", "lnd2_data"),
+    "argus3": ("lnd3", "lnd3_data"),
+}

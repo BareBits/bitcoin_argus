@@ -32,6 +32,9 @@ def make(networks: dict, **global_over) -> dict:
         if isinstance(net, dict):
             net.setdefault("cashupayserver", {"enabled": False})
             net.setdefault("woocommerce", {"enabled": False})
+            # Ark (captaind + CLN bridge) is off by default, so minimal-network
+            # tests stay minimal without an override here; tests that exercise it
+            # pass an explicit ``ark`` block.
     return {"global": g, "networks": networks}
 
 

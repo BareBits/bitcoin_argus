@@ -58,6 +58,8 @@ _KEYWORD_BUCKETS = (
     "lnd2",
     "lnd3",
     "lnd",
+    "captaind",  # Ark server
+    "cln",  # Ark Lightning bridge (Core Lightning)
     "cashupayserver",  # before "cashu" so it isn't folded into the mint bucket
     "cashu-wallet",
     "cashu",

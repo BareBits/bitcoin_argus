@@ -311,7 +311,7 @@ def test_service_versions_from_image_tags():
     )
     by_bucket = {s.bucket: s for s in section.services}
     bitcoind = by_bucket["bitcoind"]
-    assert bitcoind.version == "v28.0"
+    assert bitcoind.version == "30.0"
     assert bitcoind.repo_url == "https://github.com/bitcoin/bitcoin"
     assert by_bucket["lnd"].version == "0.19.3-beta"
     assert by_bucket["lnd"].repo_url.endswith("lightningnetwork/lnd")
@@ -926,7 +926,7 @@ def test_index_renders_version_column_and_os_tabs(client):
     # Version column: header + a linked version pointing at the upstream repo.
     assert "<th>Version</th>" in body
     assert 'href="https://github.com/bitcoin/bitcoin"' in body
-    assert ">v28.0<" in body
+    assert ">30.0<" in body
     # Per-network OS tabs (CSS-only) + their reveal rule in the page <style>.
     assert 'id="os-regtest-linux"' in body
     assert 'id="os-regtest-windows"' in body
