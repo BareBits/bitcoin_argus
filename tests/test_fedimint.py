@@ -227,6 +227,27 @@ def test_dashboard_lists_fedimint_with_backing_lnd():
     assert gw.audience == "Visitor" and gw.links  # public API + a Gateway UI link
 
 
+def test_dashboard_surfaces_invite_code():
+    from argus.web.inventory import build_sections
+
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    # The metrics collector supplies the live invite code per network.
+    metrics = {"usage": {}, "host": {}, "fedimint": {"regtest": "fed11invitexyz"}}
+    rt = next(s for s in build_sections(cfg, allocate(cfg), metrics) if s.key == "regtest")
+    guardian = next(s for s in rt.services if s.name == "Fedimint guardian")
+    assert guardian.invite_code == "fed11invitexyz"
+    # QR renders when the optional qrcode lib is present; else degrades to text-only.
+    try:
+        import qrcode  # noqa: F401
+
+        assert guardian.invite_qr and "<svg" in guardian.invite_qr
+    except ImportError:
+        assert guardian.invite_qr is None
+    # The code lives on the leader guardian only, not the gateway rows.
+    gw = next(s for s in rt.services if s.name.startswith("Fedimint gateway"))
+    assert gw.invite_code is None
+
+
 def test_dashboard_single_guardian_unnumbered():
     from argus.web.inventory import build_sections
 
