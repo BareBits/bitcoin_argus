@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import yaml
@@ -125,6 +126,17 @@ def generate(
     port_map = allocate(cfg)
     output_dir = Path(output_dir)
     secrets_dir = Path(secrets_dir)
+
+    # Capability guard: warn (don't fail) where Fedimint was requested on a chain
+    # it can't run, and skip it there. No current chain trips this; the warning
+    # exists so a future/unsupported network degrades loudly instead of silently.
+    for k, net in cfg.enabled_networks():
+        if net.fedimint.enabled and not net.fedimint_supported(NETWORK_SPECS[k]):
+            print(
+                f"warning: [{k}] Fedimint is enabled but unsupported on this "
+                f"network's chain ({NETWORK_SPECS[k].chain}); skipping it here.",
+                file=sys.stderr,
+            )
 
     # The installation's single onion identity (pre-generated, persisted, stable).
     # Derived even when Tor is off only if needed; gate on enablement to avoid

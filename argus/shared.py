@@ -63,6 +63,28 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                         ssl=cfg.global_.ssl_enabled and net.cashu.ssl,
                     )
                 )
+        if net.fedimint_enabled(NETWORK_SPECS[net_key]):
+            # Each guardian's client API (its URL is in the invite code, so a Fedi
+            # wallet must reach it) and each gateway's API (Lightning deposits/
+            # withdrawals) get fronted publicly. Both are WebSocket/HTTP services —
+            # Caddy's reverse_proxy upgrades WebSockets automatically. Fedimint has
+            # no per-service SSL flag, so it follows the global switch.
+            n = net.fedimint_guardian_count(NETWORK_SPECS[net_key])
+            for i in range(n):
+                sites.append(
+                    _HttpSite(
+                        public_port=ports[f"fedimintd_{i}_api_public"],
+                        backend_port=ports[f"fedimintd_{i}_api"],
+                        ssl=cfg.global_.ssl_enabled,
+                    )
+                )
+                sites.append(
+                    _HttpSite(
+                        public_port=ports[f"gatewayd_{i}_api_public"],
+                        backend_port=ports[f"gatewayd_{i}_api"],
+                        ssl=cfg.global_.ssl_enabled,
+                    )
+                )
         if net.mempool_enabled(NETWORK_SPECS[net_key]):
             sites.append(
                 _HttpSite(

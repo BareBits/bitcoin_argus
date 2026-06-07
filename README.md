@@ -19,6 +19,7 @@ that network.
 | **Fulcrum** (≥1) | Electrum server for light wallets + mempool backend | Electrum port open |
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
+| **Fedimint** (`fedimintd` + `gatewayd`) | Federated ecash mint (1–3 guardians) + a Lightning gateway per ring node; alongside Cashu (see below) | Guardian + gateway APIs via shared proxy |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **CashuPayServer** | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
 | **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
@@ -152,6 +153,45 @@ with `lnd.secondary.enabled` / `lnd.tertiary.enabled: false`).
 > When the set of Caddy sites/ports changes, **restart the Caddy container**
 > (`docker restart argus-caddy`) — a hot `caddy reload` won't bind new
 > host-mode listeners.
+
+### Fedimint federation + Lightning gateway
+
+Alongside the (single-custodian) Cashu mint, every network also runs a **Fedimint
+federation** — Chaumian ecash with **M-of-N guardian custody** — plus a **Lightning
+gateway per ring node**. On by default; configure under `fedimint`.
+
+- **Guardians** (`fedimintd` ×N, `fedimint.guardians`, 1–3, default 1) custody
+  on-chain BTC in a threshold multisig and issue ecash backed 1:1. They all track
+  the chain through this network's **bitcoind** — safe to share because bitcoind is
+  only a chain view + transaction broadcaster and never holds keys (each guardian
+  holds its own key share). The federation is created by an **automated,
+  non-interactive DKG** on first deploy (the `fedimint-setup` sidecar drives
+  `fedimint-cli admin setup` exactly as Fedimint's own `devimint` does), which
+  writes the **invite code** to a shared volume.
+- **Gateways** (`gatewayd` ×N) bridge federation ecash ↔ Lightning. **One gateway
+  is paired with each ring LND node** (gateway *i* → `argus`*i*), so `guardians` is
+  capped by the number of ring nodes enabled. Because the gateways ride the
+  **liquidity ring's self-rebalancing channels**, the federation needs **no new
+  liquidity machinery** — it works on networks Argus can't mine, the same way the
+  ring does.
+- **Use it from a Fedi-style wallet:** the guardian APIs (join / on-chain deposit)
+  and the gateway APIs (Lightning deposit/withdraw) are fronted publicly by the
+  shared Caddy (`wss://`), so a wallet can join the federation via the invite code
+  and move sats in/out over Lightning.
+- **Funding the ecash float** (`fedimint.gateway.float_btc`, default 0.5 BTC per
+  gateway) mirrors the ring's split: **mined** on auto-funded nets; on
+  external-funded nets the `fedimint-gateways` sidecar surfaces each gateway's
+  **ecash peg-in address** for you (or a faucet) to send to.
+- **Auto-disable guard:** Fedimint is skipped (with a generation-time warning) on
+  any network whose chain it can't run on. Every chain Argus ships today is
+  supported — the custom signets and mutinynet run as `signet`, testnet3 as
+  `testnet`, plus `testnet4`/`regtest` — so nothing is excluded; the guard only
+  trips for a hypothetical future/unsupported chain.
+
+Guardian/gateway passwords are auto-generated to `secrets/<net>/`; the DKG key
+shares live in the `fedimintd_data` volume (like LND's seed in `lnd_data`), so an
+auto-reset re-creates the federation from scratch (the invite code changes).
+Disable per network with `fedimint.enabled: false`.
 
 ## Dashboard
 

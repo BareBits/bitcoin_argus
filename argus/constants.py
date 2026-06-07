@@ -308,3 +308,53 @@ BITCART_BTCLND_GRPC_OFFSET = 450
 FULCRUM_BASE = 40
 FULCRUM_STRIDE = 4  # electrum_tcp, electrum_ssl, admin, (spare)
 FULCRUM_MAX_INSTANCES = (PORT_OFFSETS["cashu_public"] - FULCRUM_BASE) // FULCRUM_STRIDE
+
+
+# --- Fedimint (federation + Lightning gateway) ------------------------------
+
+# Each guardian (``fedimintd``) tracks the chain through bitcoind's RPC and is
+# told which network it is on via ``FM_BITCOIN_NETWORK`` (a rust-bitcoin
+# ``Network``). fedimintd's only network gate is a check that bitcoind's reported
+# ``getblockchaininfo.chain`` matches this value (not a genesis hash), so the
+# custom signets and mutinynet — which all report ``chain="signet"`` — validate as
+# ``signet``. This maps each Argus bitcoind ``chain`` selector to that value;
+# note bitcoind's testnet3 selector is ``test`` but the Network value is
+# ``testnet``.
+FEDIMINT_NETWORK_KEY: dict[str, str] = {
+    "regtest": "regtest",
+    "test": "testnet",
+    "testnet4": "testnet4",
+    "signet": "signet",
+}
+
+# The chains Fedimint supports, and the capability guard's source of truth. Every
+# current Argus chain maps to a value fedimintd accepts, so nothing is excluded
+# today; a future chain whose selector is absent here auto-disables Fedimint on
+# that network (with a warning) rather than generating a stack fedimintd would
+# reject at runtime with "Wrong Network". Keep in sync with FEDIMINT_NETWORK_KEY.
+FEDIMINT_SUPPORTED_CHAINS: frozenset[str] = frozenset(FEDIMINT_NETWORK_KEY)
+
+# Guardians per federation (each is a fedimintd container). One Lightning gateway
+# (gatewayd) is paired with each ring LND node, so the gateway count equals the
+# guardian count and this also caps it at the three-node ring size.
+FEDIMINT_MAX_GUARDIANS = 3
+
+# In-container listen ports. Each guardian and each gateway is its own container on
+# the isolated per-network compose network, so these are identical across them
+# (like LND's 9735/10009 across the three ring nodes). P2P/API/UI per guardian;
+# a single API port per gateway.
+FEDIMINTD_INTERNAL_PORTS: dict[str, int] = {"p2p": 8173, "api": 8174, "ui": 8175}
+GATEWAYD_INTERNAL_PORT = 8176
+
+# Host-port layout inside a network's 1000-block. Guardians and gateways are a
+# variable-length list (1..FEDIMINT_MAX_GUARDIANS), so — like Fulcrum — their
+# ports are computed in argus.ports from these strided bases rather than living in
+# PORT_OFFSETS. Per guardian: api_public (Caddy fronts it; its URL goes in the
+# federation invite code), api (loopback ws backend Caddy proxies to), ui
+# (loopback admin/setup UI). Per gateway: api (loopback; gateway-cli + the
+# dashboard read it). Guardian P2P is container-internal (guardians reach each
+# other by service name) and so is not host-published.
+FEDIMINT_GUARDIAN_BASE = 500
+FEDIMINT_GUARDIAN_STRIDE = 4  # api_public, api, ui, (spare)
+FEDIMINT_GATEWAY_BASE = 520
+FEDIMINT_GATEWAY_STRIDE = 2  # api, (spare)
