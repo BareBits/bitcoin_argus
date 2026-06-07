@@ -45,6 +45,24 @@ _HOSTNAME_LABEL = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
 # Networks whose block production Argus can drive itself.
 _MINEABLE_NETWORKS = {"regtest", "custom-signet-short", "custom-signet-long"}
 
+# Minimum Bitcoin Core major version the Ark server (captaind) needs: it parses
+# the `bits` field of getblockchaininfo, which Core added in 29.0.
+_ARK_MIN_CORE_MAJOR = 29
+
+
+def _core_major_from_image(image: str) -> int | None:
+    """Best-effort Core major version from a Docker image ref's tag.
+
+    e.g. ``bitcoin/bitcoin:30.0`` -> 30, ``lncm/bitcoind:v28.0`` -> 28. Returns
+    None when the tag is absent or has no leading numeric version (a custom build
+    whose version can't be inferred — we don't guess, so the Ark guard skips it).
+    """
+    if ":" not in image:
+        return None
+    tag = image.rsplit(":", 1)[1].lstrip("vV")
+    m = re.match(r"(\d+)", tag)
+    return int(m.group(1)) if m else None
+
 
 def _is_valid_host(value: str) -> bool:
     """Accept a DNS hostname or a bare IP address."""
@@ -114,7 +132,11 @@ class GlobalConfig(_Base):
     ssl_enabled: bool = True  # master switch; set False for local/test runs
     acme_email: str | None = None
     # Container images (verified against the target host at deploy time).
-    bitcoind_image: str = "lncm/bitcoind:v28.0"
+    # Bitcoin Core >= 29.0 is required by the Ark server (captaind needs the `bits`
+    # field added to getblockchaininfo in Core 29.0); the official image is used
+    # since lncm/bitcoind currently tops out at v28. Pinned to the same major as
+    # Second's Ark reference stack.
+    bitcoind_image: str = "bitcoin/bitcoin:30.0"
     # Mutinynet needs a signetblocktime-capable bitcoind; no public image
     # exists, so the operator must supply one (build from MutinyWallet/mutiny-net
     # or Bitcoin Knots). Empty unless mutinynet is enabled.
@@ -1240,13 +1262,32 @@ class ArgusConfig(_Base):
             # an error — it is auto-disabled with a generation-time warning (see
             # ark_enabled). channel_btc < ~0.167 BTC avoids needing wumbo on the
             # bridge; warn-free either way (LND accepts the inbound channel).
-            if net.ark_enabled(spec) and not net.ark_target_enabled(spec):
-                alias, _svc, _vol = net.ark_channel_target(spec)
-                errors.append(
-                    f"[{key}] ark.channel.target_node={alias!r} is not deployed on "
-                    f"this network; pick a ring node that exists (argus1 is always "
-                    f"on; enable lnd.secondary for argus2 / lnd.tertiary for argus3)"
+            if net.ark_enabled(spec):
+                if not net.ark_target_enabled(spec):
+                    alias, _svc, _vol = net.ark_channel_target(spec)
+                    errors.append(
+                        f"[{key}] ark.channel.target_node={alias!r} is not deployed "
+                        f"on this network; pick a ring node that exists (argus1 is "
+                        f"always on; enable lnd.secondary for argus2 / lnd.tertiary "
+                        f"for argus3)"
+                    )
+                # captaind needs Bitcoin Core >= 29.0 (getblockchaininfo `bits`).
+                # Check the effective node image (the Knots image on mutinynet); a
+                # version we can't parse from the tag is left to the operator.
+                img = (
+                    self.global_.bitcoind_knots_image
+                    if spec.needs_knots
+                    else self.global_.bitcoind_image
                 )
+                major = _core_major_from_image(img)
+                if major is not None and major < _ARK_MIN_CORE_MAJOR:
+                    errors.append(
+                        f"[{key}] Ark requires Bitcoin Core >= {_ARK_MIN_CORE_MAJOR}.0 "
+                        f"(captaind reads getblockchaininfo's `bits`, added in 29.0), "
+                        f"but the node image {img!r} looks like Core {major}; set "
+                        f"{'global.bitcoind_knots_image' if spec.needs_knots else 'global.bitcoind_image'} "
+                        f"to a >= {_ARK_MIN_CORE_MAJOR}.0 build, or disable ark on this network"
+                    )
 
             # track whether any internet-facing SSL service exists (needs ACME email)
             if key != "regtest":

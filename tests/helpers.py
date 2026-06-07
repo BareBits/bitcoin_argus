@@ -32,6 +32,10 @@ def make(networks: dict, **global_over) -> dict:
         if isinstance(net, dict):
             net.setdefault("cashupayserver", {"enabled": False})
             net.setdefault("woocommerce", {"enabled": False})
+            # Ark (captaind + CLN bridge) defaults ON in production but is heavy and
+            # carries a Bitcoin Core >= 29 requirement; keep minimal-network tests
+            # minimal by defaulting it OFF unless a test sets an explicit ark block.
+            net.setdefault("ark", {"enabled": False})
     return {"global": g, "networks": networks}
 
 

@@ -30,8 +30,10 @@ def _compose(out, net):
 
 # Ark needs the LND ring's nodes present; the default network has them on, so most
 # tests just disable Bitcart to stay light. Disabling the ring (channels) but
-# keeping node 1 is still a valid Ark target (argus1 always exists).
-_ARK_NET = {"enabled": True, "bitcart": BITCART_OFF}
+# keeping node 1 is still a valid Ark target (argus1 always exists). The shared
+# test helper defaults ark OFF, so opt in explicitly here. (The default bitcoind
+# image is Core >= 29, so the Ark version guard is satisfied.)
+_ARK_NET = {"enabled": True, "bitcart": BITCART_OFF, "ark": {"enabled": True}}
 
 
 # --- config / validation -----------------------------------------------------
@@ -128,6 +130,9 @@ def test_ark_services_and_volumes(tmp_path):
     # publishes only its P2P port.
     assert svcs["cln"]["build"]["context"] == "../ark-cln"
     assert svcs["cln"]["hostname"] == "cln"
+    # Must run Second's start script (hold plugin + gRPC + cert gen), not the base
+    # image's default entrypoint.
+    assert svcs["cln"]["entrypoint"] == ["/root/cln/start.sh"]
     assert any(":9735" in p and p.startswith("0.0.0.0:") for p in svcs["cln"]["ports"])
     # captaind uses the configured image, reads CLN certs read-only, gRPC loopback.
     assert svcs["captaind"]["image"] == "${ARK_CAPTAIND_IMAGE}"
@@ -150,8 +155,15 @@ def test_ark_captaind_toml_regtest(tmp_path):
     toml = (out / "regtest" / "ark" / "captaind.toml").read_text()
     assert 'network = "regtest"' in toml
     # bitcoind points at the network's node with the generated RPC creds.
-    assert 'url = "bitcoind:18443"' in toml
+    assert 'url = "http://bitcoind:18443"' in toml
     assert 'rpc_user = "argus_regtest"' in toml
+    # captaind deserializes strictly, so the config must be complete: the required
+    # nested sections from the reference template must all be present.
+    for section in ("[vtxopool]", "[fee_estimator]", "[fees.board]", "[watchman]"):
+        assert section in toml, f"missing required section {section}"
+    # gRPC binds 0.0.0.0 (host port-map + setup sidecar must reach it).
+    assert 'public_address = "0.0.0.0:3535"' in toml
+    assert 'admin_address = "0.0.0.0:3536"' in toml
     secrets = dict(
         line.split("=", 1)
         for line in (sec / "regtest" / "secrets.env").read_text().splitlines()
