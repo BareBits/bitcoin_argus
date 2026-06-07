@@ -197,6 +197,45 @@ def test_ark_caddy_and_firewall(tmp_path):
     assert f"ufw allow {ports['ark_cln_p2p']}/tcp" in fw
 
 
+def test_ark_dashboard_rows(tmp_path):
+    # The operator dashboard lists the Ark server + its CLN bridge node.
+    from argus.web.inventory import build_sections
+
+    data = make({"regtest": _ARK_NET})
+    _gen(tmp_path, data)
+    cfg = validated(data)
+    section = next(
+        s
+        for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    names = [s.name for s in section.services]
+    assert "Ark server (captaind)" in names
+    cln = next(s for s in section.services if s.bucket == "cln")
+    assert "argus1" in cln.name  # names the ring node it bridges into
+    captaind = next(s for s in section.services if s.bucket == "captaind")
+    # The Ark gRPC API is public (fronted by Caddy) -> a visitor-reachable row.
+    assert captaind.audience == "Visitor"
+    assert captaind.repo_url.endswith("ark-bitcoin/bark")
+    assert cln.version == "v26.04.1"
+
+
+def test_ark_not_on_dashboard_when_disabled(tmp_path):
+    from argus.web.inventory import build_sections
+
+    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF,
+                             "ark": {"enabled": False}}})
+    _gen(tmp_path, data)
+    cfg = validated(data)
+    section = next(
+        s
+        for s in build_sections(cfg, allocate(cfg), {"usage": {}, "host": {}})
+        if s.key == "regtest"
+    )
+    buckets = {s.bucket for s in section.services}
+    assert "captaind" not in buckets and "cln" not in buckets
+
+
 def test_ark_credentials_info_row(tmp_path):
     from pathlib import Path
 

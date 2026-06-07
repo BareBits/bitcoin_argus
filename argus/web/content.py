@@ -281,6 +281,9 @@ SUBTOOL_REPO: dict[str, str] = {
     "cashu": "https://github.com/cashubtc/nutshell",
     "cashu_wallet": "https://github.com/cashubtc/cashu.me",
     "fedimint": "https://github.com/fedimint/fedimint",
+    # Ark server (Second's captaind) + its Core Lightning bridge node.
+    "ark": "https://gitlab.com/ark-bitcoin/bark",
+    "ark_cln": "https://github.com/ElementsProject/lightning",
     "mempool": "https://github.com/mempool/mempool",
     "bitcart": "https://github.com/BareBits/bitcart",
     "cashupayserver": "https://github.com/BareBits/cashupayserver",

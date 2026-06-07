@@ -29,6 +29,11 @@ from .constants import NETWORK_SPECS
 # The shared image tag every per-network Ark CLN bridge service builds/uses.
 ARK_CLN_IMAGE = "argus-ark-cln:local"
 
+# The Core Lightning version the bridge image pins (kept in sync with the FROM in
+# _dockerfile()); surfaced on the operator dashboard since the built image's tag
+# (``:local``) carries no version. Bump alongside the Dockerfile's lightningd pin.
+ARK_CLN_VERSION = "v26.04.1"
+
 
 def ark_enabled_anywhere(cfg: ArgusConfig) -> bool:
     """True when any enabled network runs the Ark ASP (so the bridge is needed)."""
