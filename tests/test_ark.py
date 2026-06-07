@@ -39,11 +39,20 @@ _ARK_NET = {"enabled": True, "bitcart": BITCART_OFF, "ark": {"enabled": True}}
 # --- config / validation -----------------------------------------------------
 
 
-def test_ark_on_by_default():
+def test_ark_off_by_default():
+    # Ark is opt-in: a network with no explicit ark block has it disabled.
+    from argus.config import ArkCfg
+
+    assert ArkCfg().enabled is False
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    net = cfg.networks["regtest"]
+    assert net.ark_enabled(NETWORK_SPECS["regtest"]) is False
+
+
+def test_ark_enabled_opt_in():
     cfg = validated(make({"regtest": _ARK_NET}))
     net = cfg.networks["regtest"]
     spec = NETWORK_SPECS["regtest"]
-    assert net.ark.enabled is True
     assert net.ark_enabled(spec) is True
     # Default channel target is argus1 (the node Cashu/Fedimint also use).
     assert net.ark_channel_target(spec) == ("argus1", "lnd", "lnd_data")
@@ -83,14 +92,14 @@ def test_ark_target_node_must_exist():
             "lnd": {"channels": {"enabled": False},
                     "secondary": {"enabled": False},
                     "tertiary": {"enabled": False}},
-            "ark": {"channel": {"target_node": "argus2"}}}}))
+            "ark": {"enabled": True, "channel": {"target_node": "argus2"}}}}))
     assert "target_node" in str(e.value) and "argus2" in str(e.value)
 
 
 def test_ark_target_argus2_ok_when_secondary_on():
     # With the ring on (default), argus2 exists, so targeting it validates.
     cfg = validated(make({"regtest": {
-        **_ARK_NET, "ark": {"channel": {"target_node": "argus2"}}}}))
+        **_ARK_NET, "ark": {"enabled": True, "channel": {"target_node": "argus2"}}}}))
     spec = NETWORK_SPECS["regtest"]
     assert cfg.networks["regtest"].ark_channel_target(spec) == (
         "argus2", "lnd2", "lnd2_data")

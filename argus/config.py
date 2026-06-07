@@ -475,14 +475,16 @@ class ArkCfg(_Base):
     and CLN each print a deposit address at setup. Ark creates no coins, so on a
     network Argus can't mine the operator/faucet seeds those addresses once.
 
-    On by default on every supported network. On a network whose chain Ark cannot
-    run (none today — see ``constants.ARK_SUPPORTED_CHAINS``) it is auto-disabled
-    with a warning rather than generating a stack captaind/CLN would reject;
-    resolve effective state with :meth:`NetworkCfg.ark_enabled`, never read
-    ``enabled`` directly.
+    Off by default (opt in with ``ark.enabled: true``): it is an alpha stack, is
+    heavier than the other sub-tools (captaind + Postgres + a CLN node), and
+    requires Bitcoin Core >= 29 (see the guard in ``_validate_semantics``). When
+    enabled on a network whose chain Ark cannot run (none today — see
+    ``constants.ARK_SUPPORTED_CHAINS``) it is auto-disabled with a warning rather
+    than generating a stack captaind/CLN would reject; resolve effective state with
+    :meth:`NetworkCfg.ark_enabled`, never read ``enabled`` directly.
     """
 
-    enabled: bool = True
+    enabled: bool = False
     # The CLN bridge node's gossip alias (<=32 bytes, like an LND alias).
     cln_alias: str = "argus-ark"
     channel: ArkChannelCfg = Field(default_factory=ArkChannelCfg)

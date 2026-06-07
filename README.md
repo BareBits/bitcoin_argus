@@ -20,7 +20,7 @@ that network.
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
 | **Fedimint** (`fedimintd` + `gatewayd`) | Federated ecash mint (1–3 guardians) + a Lightning gateway per ring node; alongside Cashu (see below) | Guardian + gateway APIs via shared proxy |
-| **Ark ASP** (`captaind` + `cln`) | Ark server (off-chain VTXOs) + a Core Lightning bridge that opens one channel into the ring (see below) | Ark gRPC via shared proxy; CLN P2P open |
+| **Ark ASP** (`captaind` + `cln`) *(opt-in)* | Ark server (off-chain VTXOs) + a Core Lightning bridge that opens one channel into the ring (see below) | Ark gRPC via shared proxy; CLN P2P open |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **CashuPayServer** | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
 | **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
@@ -197,10 +197,13 @@ Disable per network with `fedimint.enabled: false`.
 
 ### Ark ASP (captaind + Lightning bridge)
 
-Alongside the LND ring, every network also runs an **Ark ASP** — Second's
+A network can also run an **Ark ASP** — Second's
 [`captaind`](https://second.tech) Ark server plus a **Core Lightning bridge node**.
 Ark gives cheap, self-custodial **off-chain VTXOs**; the bridge connects Ark to
-Lightning. On by default; configure under `ark`.
+Lightning. **Off by default** (opt in with `ark.enabled: true`) — it is an alpha
+stack, heavier than the other sub-tools, and **requires Bitcoin Core ≥ 29**
+(`global.bitcoind_image`; the default `bitcoin/bitcoin:30.0` satisfies this).
+Configure under `ark`.
 
 - **captaind** runs the Ark protocol and an on-chain wallet that seeds rounds. The
   published image **bundles its own PostgreSQL**, so it's a single container.
@@ -226,7 +229,7 @@ Lightning. On by default; configure under `ark`.
   supported (custom signets + mutinynet as `signet`, testnet3 as `testnet`, plus
   `testnet4`/`regtest`).
 
-Disable per network with `ark.enabled: false`. captaind's wallet seed lives in the
+Enable per network with `ark.enabled: true`. captaind's wallet seed lives in the
 `ark_captaind_data` volume and the bridge's in `ark_cln_data`, so an auto-reset
 re-creates the ASP from scratch (new deposit addresses).
 

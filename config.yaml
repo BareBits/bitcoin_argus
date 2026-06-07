@@ -237,8 +237,10 @@ networks:
 #               # opens ONE channel into the ring (channel.target_node, default
 #               # argus1; channel_btc, default 0.1) — so Ark Lightning traffic rides
 #               # the triangle's self-rebalancing channels, no extra liquidity
-#               # machinery. On by default on every supported network (auto-disabled
-#               # with a warning on a future chain captaind/CLN can't run).
+#               # machinery. OFF by default (opt in with ark.enabled: true) — it is
+#               # an alpha stack, is heavier than the other sub-tools, and REQUIRES
+#               # Bitcoin Core >= 29 (global.bitcoind_image; the default 30.0 is
+#               # fine). Auto-disabled with a warning on a future chain it can't run.
 #               # FUNDING IS EXTERNAL: Ark creates no coins, so the operator/faucet
 #               # seeds the two on-chain deposit addresses the setup sidecars print
 #               # (captaind's wallet + the CLN bridge's wallet) once. captaind's gRPC
