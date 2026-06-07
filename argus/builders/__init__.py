@@ -16,6 +16,7 @@ from .cashu import build_cashu
 from .cashu_wallet import build_cashu_wallet
 from .cashupayserver import build_cashupayserver
 from .donations import build_donations
+from .fedimint import build_fedimint
 from .fulcrum import build_fulcrum
 from .lnd import build_lnd
 from .mempool import build_mempool
@@ -42,6 +43,9 @@ REGISTRY: list[SubTool] = [
         build_cashu_wallet,
         lambda c: c.net.cashu.enabled and c.net.cashu.wallet,
     ),
+    # Fedimint federation + per-ring-node Lightning gateways (alongside Cashu).
+    # Auto-disabled on any chain Fedimint can't run (none today; see config).
+    SubTool("fedimint", build_fedimint, lambda c: c.net.fedimint_enabled(c.spec)),
     # CashuPayServer (BTCPay-compatible gateway) and the WooCommerce storefront
     # that points at it. CashuPayServer is listed first so its pairing volume is
     # declared before WooCommerce references it (order is cosmetic for volumes,

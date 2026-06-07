@@ -12,12 +12,17 @@ from .config import ArgusConfig, NetworkCfg
 from .constants import (
     BITCART_BTCLND_GRPC_OFFSET,
     BITCART_BTCLND_P2P_OFFSET,
+    FEDIMINT_GATEWAY_BASE,
+    FEDIMINT_GATEWAY_STRIDE,
+    FEDIMINT_GUARDIAN_BASE,
+    FEDIMINT_GUARDIAN_STRIDE,
     FULCRUM_BASE,
     FULCRUM_MAX_INSTANCES,
     FULCRUM_STRIDE,
     NETWORK_BLOCK_BASE,
     NETWORK_BLOCK_SIZE,
     NETWORK_ORDER,
+    NETWORK_SPECS,
     PORT_OFFSETS,
 )
 
@@ -47,6 +52,22 @@ def _network_ports(net_key: str, net: NetworkCfg) -> dict[str, int]:
         ports[f"fulcrum_{i}_electrum_tcp"] = start
         ports[f"fulcrum_{i}_electrum_ssl"] = start + 1
         ports[f"fulcrum_{i}_admin"] = start + 2
+
+    # Fedimint guardians + gateways (variable count, like Fulcrum). Per guardian:
+    # api_public (Caddy fronts it; its URL is embedded in the invite code), api
+    # (loopback ws backend), ui (loopback admin/setup UI). Per gateway: api
+    # (loopback). Guardian P2P is container-internal and not host-published. Only
+    # allocated where Fedimint is effectively on (supported chain + enabled).
+    guardians = net.fedimint_guardian_count(NETWORK_SPECS[net_key])
+    for i in range(guardians):
+        g = base + FEDIMINT_GUARDIAN_BASE + i * FEDIMINT_GUARDIAN_STRIDE
+        ports[f"fedimintd_{i}_api_public"] = g
+        ports[f"fedimintd_{i}_api"] = g + 1
+        ports[f"fedimintd_{i}_ui"] = g + 2
+    for i in range(guardians):  # one gateway paired with each guardian's ring node
+        gw = base + FEDIMINT_GATEWAY_BASE + i * FEDIMINT_GATEWAY_STRIDE
+        ports[f"gatewayd_{i}_api"] = gw  # loopback backend (Caddy proxies to it)
+        ports[f"gatewayd_{i}_api_public"] = gw + 1  # Caddy public listener (wss)
 
     # Bitcart's btclnd p2p/gRPC pool bases (only when Bitcart is enabled).
     # The pools occupy dedicated sub-ranges so they never collide

@@ -2,10 +2,11 @@
 
 This covers every component with an auto-generated admin login: **Bitcart**
 (bootstrapped by the BareBits installer), **CashuPayServer** (provisioned by its
-seed script), and the **WooCommerce/WordPress** storefront (provisioned by
-WP-CLI). Argus auto-generates each password (:mod:`argus.secrets`); the deploy
-steps bootstrap the matching admin from it. The Cashu mint runs as an open mint
-(no login) and so is intentionally not listed here.
+seed script), the **WooCommerce/WordPress** storefront (provisioned by WP-CLI),
+and **Fedimint** (each gateway's web UI and each guardian's setup/admin UI, both
+password-only). Argus auto-generates each password (:mod:`argus.secrets`); the
+deploy steps bootstrap the matching admin from it. The Cashu mint runs as an open
+mint (no login) and so is intentionally not listed here.
 
 One source of truth feeds both surfaces:
 
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ArgusConfig
+from .constants import NETWORK_SPECS
 from .secrets import read_secrets
 from .tor import onion_routes
 
@@ -145,6 +147,43 @@ def build_credentials(
                     onion_url=_onion(port, "/wp-admin/"),
                 )
             )
+
+        # Fedimint -- the gateway web UI (password-only login, fronted publicly so a
+        # Fedi wallet can use it) and each guardian's setup/admin UI (loopback only;
+        # reach via SSH tunnel). Passwords are auto-generated and shared across a
+        # network's gateways/guardians respectively.
+        spec = NETWORK_SPECS[net_key]
+        if net.fedimint_enabled(spec):
+            n = net.fedimint_guardian_count(spec)
+            name1 = net.lnd.name or ("argus1" if spec.supports_miner else f"argus-{net_key}")
+            lnd_names = [name1, net.lnd.secondary.name, net.lnd.tertiary.name]
+            gw_pw = secrets.get("FEDIMINT_GATEWAY_PASSWORD")
+            for i in range(n):
+                port = ports[f"gatewayd_{i}_api_public"]
+                creds.append(
+                    Credential(
+                        network=net_key,
+                        component=f"Fedimint gateway ({lnd_names[i]}) UI",
+                        username="(password only)",
+                        username_label="Login",
+                        password=gw_pw,
+                        login_url=_url(cfg, True, port),
+                        onion_url=_onion(port, "/"),
+                    )
+                )
+            guardian_pw = secrets.get("FEDIMINT_GUARDIAN_PASSWORD")
+            for i in range(n):
+                num = "" if n == 1 else f" {i + 1}"
+                creds.append(
+                    Credential(
+                        network=net_key,
+                        component=f"Fedimint guardian{num} setup/admin UI",
+                        username="(password only; loopback — SSH-tunnel the port)",
+                        username_label="Login",
+                        password=guardian_pw,
+                        login_url=f"http://127.0.0.1:{ports[f'fedimintd_{i}_ui']}/",
+                    )
+                )
     return creds
 
 

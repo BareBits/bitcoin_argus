@@ -26,6 +26,8 @@ from pydantic import (
 from .constants import (
     DEFAULT_RESET_CHECK_INTERVAL,
     DEFAULT_RESET_MAX_SIZE_GB,
+    FEDIMINT_MAX_GUARDIANS,
+    FEDIMINT_SUPPORTED_CHAINS,
     NETWORK_SPECS,
     NetworkSpec,
 )
@@ -129,6 +131,13 @@ class GlobalConfig(_Base):
     # github.com/BareBits/cashupayserver git ref (commit SHA or tag) cloned; bump
     # it to update the gateway. Defaults to the fork's main branch.
     cashupayserver_ref: str = "main"
+    # Fedimint guardian daemon + Lightning gateway images. Bump together: the
+    # gateway and guardians should run matching versions, and the bundled
+    # fedimint-cli/gateway-cli must match for the DKG/connect-fed automation. Pinned
+    # to v0.11.2-alpha.1 — the non-interactive DKG flow Argus generates (incl.
+    # `set-local-params --federation-size`) is scripted against this release's CLI.
+    fedimintd_image: str = "fedimint/fedimintd:v0.11.2-alpha.1"
+    gatewayd_image: str = "fedimint/gatewayd:v0.11.2-alpha.1"
     # The WooCommerce storefront runs on the official WordPress images; the
     # WP-CLI image drives the (idempotent) provisioning.
     # Latest WordPress (>= 6.9 is required by current WooCommerce releases).
@@ -341,6 +350,71 @@ class CashuCfg(_Base):
     # served per network so each network's wallet state stays isolated by origin.
     wallet: bool = True
     extra_env: dict[str, str] = Field(default_factory=dict)
+
+
+class FedimintGatewayCfg(_Base):
+    """The Lightning gateway(s) bridging this federation to the LND ring.
+
+    One ``gatewayd`` is paired with each ring LND node (gateway *i* -> argus*i*),
+    so the gateway count equals ``fedimint.guardians`` and the federation's
+    Lightning traffic rides the triangle's self-rebalancing channels — no new
+    liquidity machinery is needed, which is what makes this work on networks where
+    Argus can't mine coins. ``float_btc`` is the ecash balance pegged into the
+    federation for each gateway at setup: it is analogous to inbound liquidity (the
+    gateway pre-holds ecash so it can credit recipients on incoming Lightning
+    payments). It is funded from the same wallet as the ring — mined on
+    auto-funded networks, an operator/faucet deposit on external-funded ones.
+    """
+
+    float_btc: float = Field(default=0.5, gt=0)
+    extra_env: dict[str, str] = Field(default_factory=dict)
+
+
+class FedimintCfg(_Base):
+    """A Fedimint federation (Chaumian ecash with M-of-N guardian custody) plus a
+    Lightning gateway per ring node, deployed *alongside* — not instead of — this
+    network's Cashu mint.
+
+    Guardians (``fedimintd``) custody on-chain BTC in a threshold multisig and
+    issue ecash backed 1:1. They track the chain through this network's bitcoind,
+    which all guardians share: bitcoind is only a blockchain view + broadcaster and
+    never holds keys (each guardian holds its own key share), so sharing it on a
+    single host is safe. The federation is created by an automated, non-interactive
+    DKG ceremony on first deploy (see :mod:`argus.builders.fedimint`).
+
+    ``guardians`` is 1..FEDIMINT_MAX_GUARDIANS; one Lightning gateway is paired
+    with each of the ring's LND nodes, so it also caps the gateway count at the
+    number of ring nodes that are enabled.
+
+    On by default on every supported network. On a network whose chain Fedimint
+    cannot run (none today — see ``constants.FEDIMINT_SUPPORTED_CHAINS``) it is
+    auto-disabled with a warning rather than generating a stack fedimintd would
+    reject at runtime; resolve effective state with
+    :meth:`NetworkCfg.fedimint_enabled`, never read ``enabled`` directly.
+    """
+
+    enabled: bool = True
+    guardians: int = Field(default=1, ge=1, le=FEDIMINT_MAX_GUARDIANS)
+    # Federation display name; None => "Argus <net>".
+    federation_name: str | None = None
+    gateway: FedimintGatewayCfg = Field(default_factory=FedimintGatewayCfg)
+    extra_env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("federation_name")
+    @classmethod
+    def _check_fed_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        # Passed to fedimint-cli at DKG; reject control chars/quotes that could
+        # break the generated setup command, and bound the length.
+        if any(c in v for c in "\n\r'\"`$\\") or not v.strip():
+            raise ValueError(
+                "fedimint.federation_name must be non-empty and free of "
+                "quotes/control chars"
+            )
+        if len(v.encode("utf-8")) > 100:
+            raise ValueError("fedimint.federation_name must be <= 100 bytes")
+        return v
 
 
 class BitcartPorts(_Base):
@@ -571,6 +645,7 @@ class NetworkCfg(_Base):
     bitcoind: BitcoindCfg = Field(default_factory=BitcoindCfg)
     lnd: LndCfg = Field(default_factory=LndCfg)
     cashu: CashuCfg = Field(default_factory=CashuCfg)
+    fedimint: FedimintCfg = Field(default_factory=FedimintCfg)
     bitcart: BitcartCfg = Field(default_factory=BitcartCfg)
     cashupayserver: CashuPayServerCfg = Field(default_factory=CashuPayServerCfg)
     woocommerce: WooCommerceCfg = Field(default_factory=WooCommerceCfg)
@@ -692,6 +767,42 @@ class NetworkCfg(_Base):
         explicit value always wins (and is validated)."""
         v = self.lnd.channels.rebalancer.enabled
         return self.lnd_channels_enabled(spec) if v is None else v
+
+    def fedimint_supported(self, spec: NetworkSpec) -> bool:
+        """Whether Fedimint can run on this network's chain.
+
+        fedimintd accepts a fixed set of ``FM_BITCOIN_NETWORK`` values; every
+        current Argus chain maps to one (the custom signets/mutinynet all run as
+        ``signet``), so this is True for all networks today. It is the capability
+        guard for any future chain Fedimint can't express."""
+        return spec.chain in FEDIMINT_SUPPORTED_CHAINS
+
+    def fedimint_enabled(self, spec: NetworkSpec) -> bool:
+        """Effective Fedimint state: requested AND supported on this chain.
+
+        Auto-disables (rather than erroring) where the chain is unsupported, so a
+        broad ``fedimint.enabled: true`` never generates a stack fedimintd would
+        reject; the unsupported case is surfaced as a generation-time warning."""
+        return self.fedimint.enabled and self.fedimint_supported(spec)
+
+    def fedimint_available_ring_nodes(self, spec: NetworkSpec) -> int:
+        """How many ring LND nodes exist to pair gateways with (node1 + 2 + 3).
+
+        Node 1 (``lnd``) is always present; nodes 2/3 follow the secondary/tertiary
+        toggles. Caps the number of guardians (each pairs a gateway to one node)."""
+        return (
+            1
+            + int(self.lnd_secondary_enabled(spec))
+            + int(self.lnd_tertiary_enabled(spec))
+        )
+
+    def fedimint_guardian_count(self, spec: NetworkSpec) -> int:
+        """Number of guardians (= gateways) to deploy, or 0 when Fedimint is off."""
+        return self.fedimint.guardians if self.fedimint_enabled(spec) else 0
+
+    def fedimint_federation_name(self, net_key: str) -> str:
+        """The federation's display name: explicit, else ``Argus <net>``."""
+        return self.fedimint.federation_name or f"Argus {net_key}"
 
     def bitcoind_p2p_gated(self, net_key: str, spec: NetworkSpec) -> bool:
         """Whether bitcoind self-gates its P2P listener (regtest auto-channels):
@@ -1011,10 +1122,27 @@ class ArgusConfig(_Base):
                         f"is enabled (or set bitcart.admin_email to share it)"
                     )
 
+            # Fedimint: one Lightning gateway is paired with each ring LND node, so
+            # the federation can have no more guardians than there are ring nodes to
+            # host their gateways. (An unsupported chain is NOT an error — it is
+            # auto-disabled with a generation-time warning; see fedimint_enabled.)
+            if net.fedimint_enabled(spec):
+                available = net.fedimint_available_ring_nodes(spec)
+                if net.fedimint.guardians > available:
+                    errors.append(
+                        f"[{key}] fedimint.guardians ({net.fedimint.guardians}) "
+                        f"exceeds the {available} available ring LND node(s) (one "
+                        f"gateway is paired with each node); lower guardians, or "
+                        f"enable lnd.secondary/lnd.tertiary"
+                    )
+
             # track whether any internet-facing SSL service exists (needs ACME email)
             if key != "regtest":
                 services_ssl = [
                     net.cashu.enabled and net.cashu.ssl,
+                    # The guardian API is fronted by Caddy (its URL goes in the
+                    # invite code), so it needs TLS like the other public services.
+                    net.fedimint_enabled(spec),
                     net.bitcart.enabled and net.bitcart.ssl,
                     net.cashupayserver.enabled and net.cashupayserver.ssl,
                     net.woocommerce.enabled and net.woocommerce.ssl,

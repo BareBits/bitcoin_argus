@@ -6,3 +6,4 @@ peewee>=3.17
 psutil>=5.9
 docker>=7
 requests>=2.31
+qrcode>=7  # render the Fedimint invite code as a scannable QR (SVG, no extra deps)

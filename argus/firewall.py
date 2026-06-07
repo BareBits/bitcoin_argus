@@ -46,6 +46,20 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
                 rules.append(
                     (str(ports["cashu_wallet_public"]), f"{net_key} cashu wallet")
                 )
+        if net.fedimint_enabled(spec):
+            # Guardian + gateway APIs are fronted by the host-networked Caddy, so
+            # default-deny ufw must allow their public ports (a Fedi wallet reaches
+            # the guardians to join and the gateways for Lightning in/out).
+            n = net.fedimint_guardian_count(spec)
+            for i in range(n):
+                rules.append(
+                    (str(ports[f"fedimintd_{i}_api_public"]),
+                     f"{net_key} fedimint guardian{i} api")
+                )
+                rules.append(
+                    (str(ports[f"gatewayd_{i}_api_public"]),
+                     f"{net_key} fedimint gateway{i} api")
+                )
         if net.mempool_enabled(spec):
             rules.append((str(ports["mempool_public"]), f"{net_key} mempool"))
         if net.bitcart.enabled:

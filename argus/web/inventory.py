@@ -60,6 +60,10 @@ class ServiceRow:
     # None => no version cell (shown as "—").
     version: str | None = None
     repo_url: str | None = None
+    # Fedimint federation invite code (leader-guardian row only): the string a
+    # wallet joins with, plus a scannable QR (inline SVG) when it can be rendered.
+    invite_code: str | None = None
+    invite_qr: str | None = None
 
     @property
     def audience(self) -> str:
@@ -149,6 +153,30 @@ class NetworkSection:
 def _url(cfg: ArgusConfig, service_ssl: bool, port: int) -> str:
     scheme = "https" if (cfg.global_.ssl_enabled and service_ssl) else "http"
     return f"{scheme}://{cfg.global_.hostname}:{port}/"
+
+
+def _invite_qr_svg(code: str | None) -> str | None:
+    """Render a Fedimint invite code as an inline SVG QR a Fedi wallet can scan.
+
+    Offline (no external service). Returns None when there is no code or the
+    optional ``qrcode`` lib isn't installed — the row still shows the copyable
+    text, so the dashboard degrades gracefully."""
+    if not code:
+        return None
+    try:
+        import io
+
+        import qrcode
+        import qrcode.image.svg
+
+        qr = qrcode.QRCode(box_size=8, border=2)
+        qr.add_data(code)
+        qr.make(fit=True)
+        buf = io.BytesIO()
+        qr.make_image(image_factory=qrcode.image.svg.SvgPathImage).save(buf)
+        return buf.getvalue().decode()
+    except Exception:
+        return None
 
 
 def _sat_to_btc(sat: int) -> str:
@@ -382,6 +410,45 @@ def _service_rows(
                     links=[LinkRef("Open wallet", clear, onion)],
                     version=(g.cashu_wallet_ref[:7] or None),
                     repo_url=SUBTOOL_REPO["cashu_wallet"],
+                )
+            )
+
+    # Fedimint federation (guardians) + a Lightning gateway per ring node. Each
+    # gateway rides the LND node it is paired with, so its row names that node
+    # (gateway i -> argus_i) — the federation's Lightning liquidity is that node's.
+    if net.fedimint_enabled(spec):
+        n = net.fedimint_guardian_count(spec)
+        lnd_names = [name1, net.lnd.secondary.name, net.lnd.tertiary.name]
+        # The live federation invite code (a wallet joins with it), read by the
+        # metrics collector from the leader guardian; shown on the leader's row.
+        invite = (metrics.get("fedimint") or {}).get(net_key)
+        for i in range(n):
+            num = "" if n == 1 else f" {i + 1}"
+            rows.append(
+                row(
+                    f"Fedimint guardian{num}",
+                    "fedimintd" if i == 0 else f"fedimintd{i + 1}",
+                    ports=[
+                        PortRef("API", ports[f"fedimintd_{i}_api_public"], public=True),
+                        PortRef("UI", ports[f"fedimintd_{i}_ui"], public=False),
+                    ],
+                    version=image_version(g.fedimintd_image) or None,
+                    repo_url=SUBTOOL_REPO["fedimint"],
+                    invite_code=invite if i == 0 else None,
+                    invite_qr=_invite_qr_svg(invite) if i == 0 else None,
+                )
+            )
+        for i in range(n):
+            rows.append(
+                row(
+                    f"Fedimint gateway ({lnd_names[i]})",
+                    "gatewayd" if i == 0 else f"gatewayd{i + 1}",
+                    ports=[PortRef("API", ports[f"gatewayd_{i}_api_public"], public=True)],
+                    links=[
+                        link("Gateway UI", g.ssl_enabled, ports[f"gatewayd_{i}_api_public"])
+                    ],
+                    version=image_version(g.gatewayd_image) or None,
+                    repo_url=SUBTOOL_REPO["fedimint"],
                 )
             )
 

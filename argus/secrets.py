@@ -31,6 +31,12 @@ _REQUIRED: dict[str, Callable[[str], str]] = {
     "WORDPRESS_ADMIN_PASSWORD": lambda net: _secrets.token_hex(16),
     "WORDPRESS_DB_PASSWORD": lambda net: _secrets.token_hex(16),
     "WORDPRESS_DB_ROOT_PASSWORD": lambda net: _secrets.token_hex(16),
+    # Fedimint: the guardian setup/admin API password (the DKG ceremony's shared
+    # auth) and the gateway-cli RPC password. Hex keeps them free of shell/quote
+    # metacharacters, since both flow through generated env files and the setup
+    # sidecar's fedimint-cli/gateway-cli commands.
+    "FEDIMINT_GUARDIAN_PASSWORD": lambda net: _secrets.token_hex(16),
+    "FEDIMINT_GATEWAY_PASSWORD": lambda net: _secrets.token_hex(16),
 }
 
 # Operator-supplied secrets (NOT auto-generated): if present in secrets.env they

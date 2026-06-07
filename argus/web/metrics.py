@@ -28,6 +28,10 @@ from dataclasses import dataclass, field
 # Where the LND node-info sidecar writes the identity pubkey (see builders/lnd.py).
 _LND_NODEINFO_PATH = "/home/lnd/.lnd/argus_nodeinfo.json"
 
+# Where the leader guardian (fedimintd) writes the federation invite code (see
+# builders/fedimint.py) — a wallet needs this to join the federation.
+_FEDIMINT_INVITE_PATH = "/data/invite-code"
+
 # Where the same per-node sidecar writes the liquidity snapshot the operator
 # dashboard reads (deposit address, on-chain balance, channel in/out totals).
 _LND_LIQUIDITY_PATH = "/home/lnd/.lnd/argus_liquidity.json"
@@ -139,6 +143,8 @@ class MetricsResult:
     # liquidity[net_key][service] -> the node's liquidity snapshot (address,
     # on-chain + channel balances) for the operator "add liquidity" panel.
     liquidity: dict[str, dict[str, dict]] = field(default_factory=dict)
+    # fedimint[net_key] -> the federation invite code (a wallet joins with it).
+    fedimint: dict[str, str] = field(default_factory=dict)
     # donations[net_key] -> {"address", "total_received", "balance"} (BTC strings).
     donations: dict[str, dict[str, str]] = field(default_factory=dict)
     # reset[net_key] -> {"size_on_disk", "limit_bytes", "block_interval_seconds",
@@ -154,6 +160,7 @@ class MetricsResult:
             "lnd2": self.lnd2,
             "lnd3": self.lnd3,
             "liquidity": self.liquidity,
+            "fedimint": self.fedimint,
             "donations": self.donations,
             "reset": self.reset,
             "errors": self.errors,
@@ -176,6 +183,23 @@ def _lnd_pubkey(client, net_key: str, service: str = "lnd") -> str | None:
         data = json.loads(member.read().decode())
         pubkey = data.get("identity_pubkey")
         return pubkey or None
+    except Exception:
+        return None
+
+
+def _fedimint_invite(client, net_key: str) -> str | None:
+    """Read the federation invite code from the leader guardian via the Docker API.
+
+    Uses get_archive (a GET, allowed by the read-only socket proxy), like the
+    pubkey/liquidity readers. Returns None until the DKG has published the code
+    (or if Fedimint isn't deployed on this network)."""
+    try:
+        ct = client.containers.get(f"argus-{net_key}-fedimintd")
+        bits, _ = ct.get_archive(_FEDIMINT_INVITE_PATH)
+        tf = tarfile.open(fileobj=io.BytesIO(b"".join(bits)))
+        member = tf.extractfile(tf.getmembers()[0])
+        code = member.read().decode().strip()
+        return code or None
     except Exception:
         return None
 
@@ -341,6 +365,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
     lnd2: dict[str, str] = {}
     lnd3: dict[str, str] = {}
     liquidity: dict[str, dict[str, dict]] = {}
+    fedimint: dict[str, str] = {}
     donations: dict[str, dict[str, str]] = {}
     reset: dict[str, dict] = {}
     errors: list[str] = []
@@ -408,6 +433,9 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
                     liq[svc] = snap
             if liq:
                 liquidity[net_key] = liq
+            invite = _fedimint_invite(client, net_key)
+            if invite:
+                fedimint[net_key] = invite
             info = _donation_info(client, net_key)
             if info:
                 donations[net_key] = info
@@ -427,6 +455,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         lnd2=lnd2,
         lnd3=lnd3,
         liquidity=liquidity,
+        fedimint=fedimint,
         donations=donations,
         reset=reset,
         errors=errors + herrs,

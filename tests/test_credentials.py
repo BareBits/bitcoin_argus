@@ -36,10 +36,8 @@ def test_build_credentials_bitcart_enabled(tmp_path):
     port_map = allocate(cfg)
     creds = build_credentials(cfg, port_map, sec)
 
-    assert len(creds) == 1
-    c = creds[0]
+    c = next(c for c in creds if c.component == "Bitcart admin")
     assert c.network == "regtest"
-    assert c.component == "Bitcart admin"
     assert c.username == "admin@example.com"
     # The surfaced password is exactly the persisted secret (never regenerated).
     assert c.password == _bitcart_pw(sec, "regtest")
@@ -59,8 +57,11 @@ def test_login_url_https_when_ssl_on(tmp_path):
     assert creds[0].login_url == f"https://x.com:{port}/"
 
 
-def test_bitcart_disabled_yields_no_credentials(tmp_path):
-    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
+def test_no_login_services_yields_no_credentials(tmp_path):
+    # No component with an admin login: Bitcart off, and Fedimint (whose gateway/
+    # guardian UIs are logins) off too.
+    data = make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"enabled": False}}})
     _, sec = _gen(tmp_path, data)
     cfg = validated(data)
     assert build_credentials(cfg, allocate(cfg), sec) == []
@@ -74,7 +75,7 @@ def test_only_filters_to_one_network(tmp_path):
     _, sec = _gen(tmp_path, data)
     cfg = validated(data)
     creds = build_credentials(cfg, allocate(cfg), sec, only="signet")
-    assert [c.network for c in creds] == ["signet"]
+    assert {c.network for c in creds} == {"signet"}  # filter keeps only signet rows
 
 
 def test_pending_when_secrets_missing(tmp_path):
@@ -112,7 +113,8 @@ def test_generate_writes_credentials_file_0600(tmp_path):
 
 
 def test_no_credentials_file_when_no_logins(tmp_path):
-    out, _ = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    out, _ = _gen(tmp_path, make({"regtest": {
+        "enabled": True, "bitcart": BITCART_OFF, "fedimint": {"enabled": False}}}))
     assert not (out / "CREDENTIALS.txt").exists()
 
 

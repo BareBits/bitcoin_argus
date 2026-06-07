@@ -203,6 +203,30 @@ networks:
 #   cashu:    { enabled, ssl, wallet, extra_env: {...} }
 #             wallet (default true): also deploy a co-located cashu.me web wallet
 #             pointed at this network's mint (set false to skip it).
+#   fedimint: { enabled, guardians, federation_name,
+#               gateway: { float_btc, extra_env }, extra_env: {...} }
+#               # A Fedimint federation (Chaumian ecash with M-of-N guardian
+#               # custody) + a Lightning gateway per ring node, deployed ALONGSIDE
+#               # this network's Cashu mint. On by default. guardians (1..3,
+#               # default 1) = number of fedimintd guardians; one gatewayd is paired
+#               # with each ring LND node (gateway i -> argus_i), so guardians is
+#               # capped by the number of ring nodes enabled. Guardians share this
+#               # network's bitcoind (a chain view + broadcaster — it holds no
+#               # keys). The federation is created by an automated, non-interactive
+#               # DKG at first deploy; a Fedi-style wallet joins via the invite code
+#               # (guardian + gateway APIs are fronted publicly by the shared Caddy).
+#               # The federation rides the liquidity ring's self-rebalancing
+#               # channels for Lightning, so it needs no extra liquidity machinery
+#               # even on networks Argus can't mine. gateway.float_btc (default 0.5)
+#               # is the ecash float pegged into the federation per gateway; it is
+#               # pegged in automatically from each gateway's OWN (ring-funded) LND
+#               # on-chain wallet, so funding is identical on every network.
+#               # guardian/gateway passwords are auto-generated to secrets/<net>/.
+#               # NOTE: Fedimint is auto-disabled (with a generation-time warning)
+#               # on any network whose chain it cannot run on. Every chain Argus
+#               # ships today is supported (the custom signets + mutinynet run as
+#               # "signet"), so nothing is excluded; a future/unsupported chain
+#               # would degrade loudly instead of generating a broken stack.
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,
 #               liquidity: { disabled, automatic_channel_creation,
