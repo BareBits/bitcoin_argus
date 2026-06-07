@@ -307,17 +307,19 @@
         {% if svc.invite_code %}
         <tr class="invite-row">
           <td colspan="7">
-            <div class="invite">
-              <div class="invite-text">
-                <strong>Federation invite code</strong>
-                <p class="invite-hint">Paste or scan this in a Fedimint wallet (e.g. Fedi) to join the federation and use it over Lightning.</p>
-                <div class="invite-code-box">
-                  <code>{{ svc.invite_code }}</code>
-                  <span class="invite-copy" tabindex="0" role="button" data-invite="{{ svc.invite_code }}" aria-label="Copy invite code">copy</span>
+            <details class="invite-details">
+              <summary>Invite code</summary>
+              <div class="invite">
+                <div class="invite-text">
+                  <p class="invite-hint">Paste or scan this in a Fedimint wallet (e.g. Fedi) to join the federation and use it over Lightning.</p>
+                  <div class="invite-code-box">
+                    <code>{{ svc.invite_code }}</code>
+                    <span class="invite-copy" tabindex="0" role="button" data-invite="{{ svc.invite_code }}" aria-label="Copy invite code">copy</span>
+                  </div>
                 </div>
+                {% if svc.invite_qr %}<div class="invite-qr">{{ svc.invite_qr|safe }}</div>{% endif %}
               </div>
-              {% if svc.invite_qr %}<div class="invite-qr">{{ svc.invite_qr|safe }}</div>{% endif %}
-            </div>
+            </details>
           </td>
         </tr>
         {% endif %}

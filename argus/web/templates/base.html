@@ -7,7 +7,13 @@
   <link rel="stylesheet" href="{{ theme_css }}">
   <style>
     /* Fedimint federation invite code (theme-neutral; inherits theme colors). */
-    tr.invite-row > td { padding: 0.6rem 0.9rem; }
+    tr.invite-row > td { padding: 0.4rem 0.9rem; }
+    .invite-details > summary {
+      cursor: pointer; user-select: none; font-weight: bold;
+      padding: 0.2rem 0; opacity: 0.85;
+    }
+    .invite-details > summary:hover { opacity: 1; }
+    .invite-details[open] > summary { margin-bottom: 0.6rem; }
     .invite { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
     .invite-text { flex: 1 1 18rem; min-width: 0; }
     .invite-hint { margin: 0.2rem 0 0.5rem; opacity: 0.8; font-size: 0.9em; }
