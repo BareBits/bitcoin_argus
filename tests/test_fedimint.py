@@ -243,3 +243,23 @@ def test_secrets_persisted(tmp_path):
     env = (sec / "regtest" / "secrets.env").read_text()
     assert "FEDIMINT_GUARDIAN_PASSWORD=" in env
     assert "FEDIMINT_GATEWAY_PASSWORD=" in env
+
+
+def test_credentials_surface_fedimint_logins(tmp_path):
+    from argus.credentials import build_credentials, format_credentials
+
+    out, sec = _gen(tmp_path, make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    creds = build_credentials(
+        validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})),
+        allocate(validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))),
+        sec,
+    )
+    gw = next(c for c in creds if c.component == "Fedimint gateway (argus1) UI")
+    guardian = next(c for c in creds if "guardian" in c.component)
+    # Passwords come from the persisted secrets (the real gateway-cli/UI logins).
+    fed_gw = (sec / "regtest" / "secrets.env").read_text()
+    assert gw.password and gw.password in fed_gw
+    assert guardian.password and gw.password != guardian.password
+    # And they render in the printed/file output.
+    text = format_credentials(creds)
+    assert "Fedimint gateway (argus1) UI" in text and "Password:" in text
