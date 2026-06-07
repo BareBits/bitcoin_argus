@@ -8,6 +8,11 @@ password-only). Argus auto-generates each password (:mod:`argus.secrets`); the
 deploy steps bootstrap the matching admin from it. The Cashu mint runs as an open
 mint (no login) and so is intentionally not listed here.
 
+The **Ark server** (captaind) is also listed, as an info-only row: it is an open
+Ark server with no admin login, so the row carries its connection URL and a
+pointer to the two runtime on-chain deposit addresses (printed by the setup
+sidecars) instead of a password.
+
 One source of truth feeds both surfaces:
 
 * ``argus credentials`` (CLI) -- prints the table on demand, read-only.
@@ -30,6 +35,11 @@ from .tor import onion_routes
 
 _PENDING = "(pending -- run `argus generate`)"
 
+# Compose project names are ``argus-<net_key>`` (see generate._project_name), so
+# containers are ``argus-<net_key>-<service>``. Used to point the operator at the
+# right ``docker logs`` for the Ark sidecars' runtime deposit addresses.
+_PROJECT_PREFIX = "argus-"
+
 
 @dataclass
 class Credential:
@@ -46,6 +56,13 @@ class Credential:
     # Same login over Tor (http://<onion>:<port>/), when the install runs Tor and
     # this service is exposed on its onion. None => clearnet only.
     onion_url: str | None = None
+    # Info-only row (no password): a connection endpoint rather than an admin
+    # login. The password line is omitted entirely (not shown as "pending"). Used
+    # for the Ark server, whose on-chain deposit addresses are runtime values the
+    # setup sidecars print (see the component note), not auto-generated secrets.
+    info_only: bool = False
+    # Extra free-text lines shown under the row (e.g. where to read live values).
+    notes: tuple[str, ...] = ()
 
     @property
     def password_text(self) -> str:
@@ -184,6 +201,35 @@ def build_credentials(
                         login_url=f"http://127.0.0.1:{ports[f'fedimintd_{i}_ui']}/",
                     )
                 )
+
+        # Ark server (captaind) — an open Ark server (no admin login), so this is
+        # an info-only row: the gRPC endpoint bark wallets connect to, plus where
+        # to read the two on-chain deposit addresses the setup sidecars print at
+        # runtime (external funding seeds captaind's wallet + the CLN bridge).
+        if net.ark_enabled(spec):
+            port = ports["ark_captaind_public"]
+            target, _svc, _vol = net.ark_channel_target(spec)
+            creds.append(
+                Credential(
+                    network=net_key,
+                    component="Ark server (captaind)",
+                    username="(open Ark server — point a bark wallet at this URL)",
+                    username_label="Connect",
+                    password=None,
+                    info_only=True,
+                    login_url=_url(cfg, True, port),
+                    notes=(
+                        f"CLN bridge P2P: {cfg.global_.hostname}:"
+                        f"{ports['ark_cln_p2p']} (opens a {net.ark.channel.channel_btc:g} "
+                        f"BTC channel into {target})",
+                        f"Fund (external) the two deposit addresses printed by:",
+                        f"  docker logs {_PROJECT_PREFIX}{net_key}-ark-setup    "
+                        f"(captaind wallet)",
+                        f"  docker logs {_PROJECT_PREFIX}{net_key}-ark-channel  "
+                        f"(CLN bridge wallet)",
+                    ),
+                )
+            )
     return creds
 
 
@@ -220,7 +266,11 @@ def format_credentials(creds: list[Credential]) -> str:
             if c.onion_url:
                 lines.append(f"    Onion:    {c.onion_url}")
             lines.append(f"    {(c.username_label + ':').ljust(9)} {c.username}")
-            lines.append(f"    Password: {c.password_text}")
+            # Info-only rows (e.g. the open Ark server) carry no password.
+            if not c.info_only:
+                lines.append(f"    Password: {c.password_text}")
+            for note in c.notes:
+                lines.append(f"    {note}")
         lines.append("")
     return "\n".join(lines)
 

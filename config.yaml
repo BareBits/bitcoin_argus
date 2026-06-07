@@ -227,6 +227,25 @@ networks:
 #               # ships today is supported (the custom signets + mutinynet run as
 #               # "signet"), so nothing is excluded; a future/unsupported chain
 #               # would degrade loudly instead of generating a broken stack.
+#   ark:      { enabled, cln_alias, channel: { target_node, channel_btc },
+#               extra_env: {...} }
+#               # An Ark ASP (Second's captaind) + a Core Lightning bridge node,
+#               # deployed ALONGSIDE this network's LND ring. captaind runs the Ark
+#               # protocol (cheap, self-custodial off-chain VTXOs); its bundled
+#               # PostgreSQL is part of the image. The CLN bridge (cln + the Boltz
+#               # hold-invoice plugin, built from source) bridges Ark<->Lightning and
+#               # opens ONE channel into the ring (channel.target_node, default
+#               # argus1; channel_btc, default 0.1) — so Ark Lightning traffic rides
+#               # the triangle's self-rebalancing channels, no extra liquidity
+#               # machinery. On by default on every supported network (auto-disabled
+#               # with a warning on a future chain captaind/CLN can't run).
+#               # FUNDING IS EXTERNAL: Ark creates no coins, so the operator/faucet
+#               # seeds the two on-chain deposit addresses the setup sidecars print
+#               # (captaind's wallet + the CLN bridge's wallet) once. captaind's gRPC
+#               # API is fronted publicly by the shared Caddy (h2c) for bark wallets;
+#               # the CLN bridge's P2P port is opened so it is a reachable LN node.
+#               # See `argus credentials` for the server URL + where to read the
+#               # deposit addresses. Set ark.enabled false to opt out per network.
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,
 #               liquidity: { disabled, automatic_channel_creation,

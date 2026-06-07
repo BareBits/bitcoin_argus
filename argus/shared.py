@@ -36,6 +36,9 @@ class _HttpSite:
     public_port: int
     backend_port: int
     ssl: bool
+    # gRPC backend: proxy over cleartext HTTP/2 (h2c) so Caddy can terminate TLS
+    # for a gRPC service (the Ark server's captaind API that bark wallets dial).
+    h2c: bool = False
 
 
 def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_HttpSite]:
@@ -85,6 +88,18 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                         ssl=cfg.global_.ssl_enabled,
                     )
                 )
+        if net.ark_enabled(NETWORK_SPECS[net_key]):
+            # captaind's Ark gRPC API: bark wallets dial it, so front it publicly.
+            # gRPC needs HTTP/2 end-to-end — Caddy terminates TLS and proxies to
+            # captaind over h2c. Ark has no per-service SSL flag (follows global).
+            sites.append(
+                _HttpSite(
+                    public_port=ports["ark_captaind_public"],
+                    backend_port=ports["ark_captaind"],
+                    ssl=cfg.global_.ssl_enabled,
+                    h2c=True,
+                )
+            )
         if net.mempool_enabled(NETWORK_SPECS[net_key]):
             sites.append(
                 _HttpSite(
@@ -187,9 +202,11 @@ def render_caddyfile(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> s
     for s in sites:
         # host-networked Caddy reaches the backend on the host loopback.
         addr = f"{g.hostname}:{s.public_port}" if s.ssl else f"http://{g.hostname}:{s.public_port}"
+        # gRPC backends speak cleartext HTTP/2; tell Caddy to proxy over h2c.
+        backend = f"h2c://127.0.0.1:{s.backend_port}" if s.h2c else f"127.0.0.1:{s.backend_port}"
         lines += [
             f"{addr} {{",
-            f"    reverse_proxy 127.0.0.1:{s.backend_port}",
+            f"    reverse_proxy {backend}",
             "}",
             "",
         ]

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from .ark_cln import generate_ark_cln
 from .bitcart import generate_bitcart
 from .builders import REGISTRY
 from .cashu_wallet import generate_cashu_wallet
@@ -137,6 +138,12 @@ def generate(
                 f"network's chain ({NETWORK_SPECS[k].chain}); skipping it here.",
                 file=sys.stderr,
             )
+        if net.ark.enabled and not net.ark_supported(NETWORK_SPECS[k]):
+            print(
+                f"warning: [{k}] Ark is enabled but unsupported on this network's "
+                f"chain ({NETWORK_SPECS[k].chain}); skipping it here.",
+                file=sys.stderr,
+            )
 
     # The installation's single onion identity (pre-generated, persisted, stable).
     # Derived even when Tor is off only if needed; gate on enablement to avoid
@@ -172,6 +179,12 @@ def generate(
     cps_dir = generate_cashupayserver(cfg, output_dir)
     if cps_dir is not None:
         dirs.append(cps_dir)
+
+    # The shared Ark Lightning-bridge (CLN + Boltz hold plugin) build context, one
+    # image reused by every network's per-net `cln` container. Built from source.
+    ark_cln_dir = generate_ark_cln(cfg, output_dir)
+    if ark_cln_dir is not None:
+        dirs.append(ark_cln_dir)
 
     # The shared Caddy layer always reflects the full set of enabled networks.
     shared_dir = generate_shared(cfg, port_map, output_dir)

@@ -20,6 +20,7 @@ that network.
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
 | **Fedimint** (`fedimintd` + `gatewayd`) | Federated ecash mint (1–3 guardians) + a Lightning gateway per ring node; alongside Cashu (see below) | Guardian + gateway APIs via shared proxy |
+| **Ark ASP** (`captaind` + `cln`) | Ark server (off-chain VTXOs) + a Core Lightning bridge that opens one channel into the ring (see below) | Ark gRPC via shared proxy; CLN P2P open |
 | **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
 | **CashuPayServer** | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
 | **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
@@ -193,6 +194,41 @@ Guardian/gateway passwords are auto-generated to `secrets/<net>/`; the DKG key
 shares live in the `fedimintd_data` volume (like LND's seed in `lnd_data`), so an
 auto-reset re-creates the federation from scratch (the invite code changes).
 Disable per network with `fedimint.enabled: false`.
+
+### Ark ASP (captaind + Lightning bridge)
+
+Alongside the LND ring, every network also runs an **Ark ASP** — Second's
+[`captaind`](https://second.tech) Ark server plus a **Core Lightning bridge node**.
+Ark gives cheap, self-custodial **off-chain VTXOs**; the bridge connects Ark to
+Lightning. On by default; configure under `ark`.
+
+- **captaind** runs the Ark protocol and an on-chain wallet that seeds rounds. The
+  published image **bundles its own PostgreSQL**, so it's a single container.
+  Argus generates its `captaind.toml` pointing at this network's **bitcoind** (RPC,
+  using the same generated credentials as the ring) and at the CLN bridge's gRPC +
+  hold-invoice gRPC (mTLS). Its Ark gRPC API is fronted publicly by the shared
+  Caddy (**h2c**) so a [`bark`](https://second.tech) wallet can connect.
+- **CLN bridge** (`cln` + the Boltz **hold-invoice** plugin) is built from source
+  into a shared image (`generated/ark-cln/`, like the cashu.me wallet). It opens
+  **one channel into the ring** — `ark.channel.target_node` (default `argus1`),
+  size `ark.channel.channel_btc` (default 0.1 BTC) — so Ark Lightning traffic rides
+  the **triangle's self-rebalancing channels**, with no extra liquidity machinery.
+  Its P2P port is opened, so the bridge is also a reachable Lightning node.
+- **Funding is external on every network.** Ark creates no coins, so the
+  operator/faucet seeds the **two on-chain deposit addresses** the setup sidecars
+  print once: `ark-setup` surfaces captaind's `rounds.address` (seeds Ark
+  rounds/VTXOs) and `ark-channel` surfaces the CLN bridge's address (funds the ring
+  channel, which then opens automatically). `argus credentials` shows the Ark
+  server URL and points at `docker logs …-ark-setup` / `…-ark-channel` for the
+  live addresses.
+- **Auto-disable guard:** like Fedimint, Ark is skipped (with a generation-time
+  warning) on any chain captaind/CLN can't run; every chain Argus ships today is
+  supported (custom signets + mutinynet as `signet`, testnet3 as `testnet`, plus
+  `testnet4`/`regtest`).
+
+Disable per network with `ark.enabled: false`. captaind's wallet seed lives in the
+`ark_captaind_data` volume and the bridge's in `ark_cln_data`, so an auto-reset
+re-creates the ASP from scratch (new deposit addresses).
 
 ## Dashboard
 

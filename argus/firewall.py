@@ -60,6 +60,12 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
                     (str(ports[f"gatewayd_{i}_api_public"]),
                      f"{net_key} fedimint gateway{i} api")
                 )
+        if net.ark_enabled(spec):
+            # captaind's Ark gRPC is fronted by the host-networked Caddy (h2c), so
+            # default-deny ufw must allow its public port; the CLN bridge's P2P is
+            # opened too so the Ark bridge is a reachable Lightning node.
+            rules.append((str(ports["ark_captaind_public"]), f"{net_key} ark server"))
+            rules.append((str(ports["ark_cln_p2p"]), f"{net_key} ark cln p2p"))
         if net.mempool_enabled(spec):
             rules.append((str(ports["mempool_public"]), f"{net_key} mempool"))
         if net.bitcart.enabled:

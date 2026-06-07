@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ..context import BuildContext, Fragment
+from .ark import build_ark
 from .bitcoind import build_bitcoind
 from .cashu import build_cashu
 from .cashu_wallet import build_cashu_wallet
@@ -46,6 +47,9 @@ REGISTRY: list[SubTool] = [
     # Fedimint federation + per-ring-node Lightning gateways (alongside Cashu).
     # Auto-disabled on any chain Fedimint can't run (none today; see config).
     SubTool("fedimint", build_fedimint, lambda c: c.net.fedimint_enabled(c.spec)),
+    # Ark ASP (captaind + a Core Lightning bridge that opens one channel into the
+    # ring). Auto-disabled on any chain Ark can't run (none today; see config).
+    SubTool("ark", build_ark, lambda c: c.net.ark_enabled(c.spec)),
     # CashuPayServer (BTCPay-compatible gateway) and the WooCommerce storefront
     # that points at it. CashuPayServer is listed first so its pairing volume is
     # declared before WooCommerce references it (order is cosmetic for volumes,

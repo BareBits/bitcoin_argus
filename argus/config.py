@@ -24,6 +24,8 @@ from pydantic import (
 )
 
 from .constants import (
+    ARK_RING_NODES,
+    ARK_SUPPORTED_CHAINS,
     DEFAULT_RESET_CHECK_INTERVAL,
     DEFAULT_RESET_MAX_SIZE_GB,
     FEDIMINT_MAX_GUARDIANS,
@@ -138,6 +140,12 @@ class GlobalConfig(_Base):
     # `set-local-params --federation-size`) is scripted against this release's CLI.
     fedimintd_image: str = "fedimint/fedimintd:v0.11.2-alpha.1"
     gatewayd_image: str = "fedimint/gatewayd:v0.11.2-alpha.1"
+    # The Ark server (Second's captaind). The published image bundles its own
+    # PostgreSQL, so no separate DB image is needed. Its Core Lightning bridge
+    # node has no published image (the Boltz hold-invoice plugin is built in), so
+    # Argus builds it from source into a shared context (see argus.ark_cln);
+    # bump global.ark_cln_ref / the build args there to update CLN/the plugin.
+    ark_captaind_image: str = "secondark/captaind:latest"
     # The WooCommerce storefront runs on the official WordPress images; the
     # WP-CLI image drives the (idempotent) provisioning.
     # Latest WordPress (>= 6.9 is required by current WooCommerce releases).
@@ -417,6 +425,54 @@ class FedimintCfg(_Base):
         return v
 
 
+class ArkChannelCfg(_Base):
+    """The single Lightning channel the Ark bridge (CLN) opens into the ring.
+
+    ``target_node`` names which ring LND node the bridge peers with and funds a
+    channel to (default ``argus1`` — the node Cashu/Fedimint also use, so Ark
+    traffic shares the triangle's self-rebalancing liquidity). ``channel_btc`` is
+    the channel size; the operator funds the bridge's on-chain wallet with at
+    least this much (plus a little for fees) at the address the setup sidecar
+    prints, then the channel opens automatically.
+    """
+
+    target_node: Literal["argus1", "argus2", "argus3"] = "argus1"
+    channel_btc: float = Field(default=0.1, gt=0)
+
+
+class ArkCfg(_Base):
+    """An Ark ASP (Ark Service Provider): Second's ``captaind`` server plus a Core
+    Lightning bridge node, deployed *alongside* this network's LND liquidity ring.
+
+    captaind runs the Ark protocol (cheap, self-custodial off-chain VTXOs) and its
+    own on-chain wallet seeds rounds; the bundled PostgreSQL is part of its image.
+    The CLN bridge (``cln`` + the Boltz hold-invoice plugin) bridges Ark to
+    Lightning and opens ONE channel into the ring (see :class:`ArkChannelCfg`), so
+    Ark<->Lightning payments route through the triangle — no separate liquidity
+    machinery. Both wallets are funded by the operator (external funding): captaind
+    and CLN each print a deposit address at setup. Ark creates no coins, so on a
+    network Argus can't mine the operator/faucet seeds those addresses once.
+
+    On by default on every supported network. On a network whose chain Ark cannot
+    run (none today — see ``constants.ARK_SUPPORTED_CHAINS``) it is auto-disabled
+    with a warning rather than generating a stack captaind/CLN would reject;
+    resolve effective state with :meth:`NetworkCfg.ark_enabled`, never read
+    ``enabled`` directly.
+    """
+
+    enabled: bool = True
+    # The CLN bridge node's gossip alias (<=32 bytes, like an LND alias).
+    cln_alias: str = "argus-ark"
+    channel: ArkChannelCfg = Field(default_factory=ArkChannelCfg)
+    # Extra environment for the CLN bridge container (e.g. CLN_LOG_LEVEL).
+    extra_env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("cln_alias")
+    @classmethod
+    def _check_alias(cls, v: str) -> str:
+        return _check_alias(v)
+
+
 class BitcartPorts(_Base):
     """Optional explicit public ports for Bitcart's frontends/daemon."""
 
@@ -646,6 +702,7 @@ class NetworkCfg(_Base):
     lnd: LndCfg = Field(default_factory=LndCfg)
     cashu: CashuCfg = Field(default_factory=CashuCfg)
     fedimint: FedimintCfg = Field(default_factory=FedimintCfg)
+    ark: ArkCfg = Field(default_factory=ArkCfg)
     bitcart: BitcartCfg = Field(default_factory=BitcartCfg)
     cashupayserver: CashuPayServerCfg = Field(default_factory=CashuPayServerCfg)
     woocommerce: WooCommerceCfg = Field(default_factory=WooCommerceCfg)
@@ -803,6 +860,47 @@ class NetworkCfg(_Base):
     def fedimint_federation_name(self, net_key: str) -> str:
         """The federation's display name: explicit, else ``Argus <net>``."""
         return self.fedimint.federation_name or f"Argus {net_key}"
+
+    def ark_supported(self, spec: NetworkSpec) -> bool:
+        """Whether the Ark ASP can run on this network's chain.
+
+        captaind (a rust-bitcoin ``Network``) and Core Lightning both accept a
+        fixed set of network names; every current Argus chain maps to one (the
+        custom signets/mutinynet all run as ``signet``), so this is True for all
+        networks today. It is the capability guard for any future chain Ark can't
+        express."""
+        return spec.chain in ARK_SUPPORTED_CHAINS
+
+    def ark_enabled(self, spec: NetworkSpec) -> bool:
+        """Effective Ark state: requested AND supported on this chain.
+
+        Auto-disables (rather than erroring) where the chain is unsupported, so a
+        broad ``ark.enabled: true`` never generates a stack captaind/CLN would
+        reject; the unsupported case is surfaced as a generation-time warning."""
+        return self.ark.enabled and self.ark_supported(spec)
+
+    def ark_channel_target(self, spec: NetworkSpec) -> tuple[str, str, str]:
+        """Resolve the Ark bridge's channel target to (alias, lnd_service, volume).
+
+        The alias is the configured ``argus1/2/3``; the service/volume are that
+        ring node's LND container name and data volume (the channel sidecar reads
+        the target's identity pubkey from the volume's argus_liquidity.json)."""
+        alias = self.ark.channel.target_node
+        service, volume = ARK_RING_NODES[alias]
+        return alias, service, volume
+
+    def ark_target_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether the Ark bridge's chosen ring node is actually deployed.
+
+        argus1 (``lnd``) is always present; argus2/argus3 follow the
+        secondary/tertiary toggles. The channel can't open to a node that isn't
+        there, so this gates validation."""
+        alias, _service, _volume = self.ark_channel_target(spec)
+        if alias == "argus2":
+            return self.lnd_secondary_enabled(spec)
+        if alias == "argus3":
+            return self.lnd_tertiary_enabled(spec)
+        return True  # argus1 is always deployed
 
     def bitcoind_p2p_gated(self, net_key: str, spec: NetworkSpec) -> bool:
         """Whether bitcoind self-gates its P2P listener (regtest auto-channels):
@@ -1136,6 +1234,20 @@ class ArgusConfig(_Base):
                         f"enable lnd.secondary/lnd.tertiary"
                     )
 
+            # Ark: the CLN bridge opens one channel into the ring, so the chosen
+            # target node must actually be deployed (argus1 always is; argus2/3
+            # follow the secondary/tertiary toggles). An unsupported chain is NOT
+            # an error — it is auto-disabled with a generation-time warning (see
+            # ark_enabled). channel_btc < ~0.167 BTC avoids needing wumbo on the
+            # bridge; warn-free either way (LND accepts the inbound channel).
+            if net.ark_enabled(spec) and not net.ark_target_enabled(spec):
+                alias, _svc, _vol = net.ark_channel_target(spec)
+                errors.append(
+                    f"[{key}] ark.channel.target_node={alias!r} is not deployed on "
+                    f"this network; pick a ring node that exists (argus1 is always "
+                    f"on; enable lnd.secondary for argus2 / lnd.tertiary for argus3)"
+                )
+
             # track whether any internet-facing SSL service exists (needs ACME email)
             if key != "regtest":
                 services_ssl = [
@@ -1143,6 +1255,9 @@ class ArgusConfig(_Base):
                     # The guardian API is fronted by Caddy (its URL goes in the
                     # invite code), so it needs TLS like the other public services.
                     net.fedimint_enabled(spec),
+                    # captaind's Ark gRPC is fronted by Caddy (h2c) so bark wallets
+                    # reach it over TLS — counts as a public SSL service.
+                    net.ark_enabled(spec),
                     net.bitcart.enabled and net.bitcart.ssl,
                     net.cashupayserver.enabled and net.cashupayserver.ssl,
                     net.woocommerce.enabled and net.woocommerce.ssl,
