@@ -1,9 +1,22 @@
-"""Persistent record of faucet payouts (one SQLite table, via peewee).
+"""Persistent record of faucet payouts (a small set of SQLite tables, via peewee).
 
 Rows are keyed by network so a single faucet process serves every network and a
 network reset can purge just that network's rows (see :mod:`argus.faucet.reset`,
 invoked from the per-network ``reset.sh``). Stored on the faucet's own data
 volume — the dashboard's metrics cache is separate.
+
+Beyond the payout log, three tables back the speed-limit rules
+(:mod:`argus.faucet.rules`):
+
+* :class:`IpClaim` — one row per ``(net, salted-IP-hash)`` holding the time of
+  that visitor's most recent successful withdrawal; backs the one-per-IP-per-day
+  rule. Short-lived: rows older than 24h are purged daily.
+* :class:`DailyUsage` — a compact per-``(net, UTC-day)`` count of successful
+  withdrawals; backs the max-amount-per-day cap. Retained for a year (and NOT
+  wiped on a network reset, since it models visitor demand, not chain state).
+* :class:`Maintenance` — a single row whose ``last_run`` timestamp lets the
+  in-process maintenance thread claim the once-a-day purge exactly once across
+  gunicorn's worker processes (see :mod:`argus.faucet.maintenance`).
 """
 
 from __future__ import annotations
@@ -11,10 +24,28 @@ from __future__ import annotations
 import os
 import time
 
-from peewee import CharField, FloatField, Model, SqliteDatabase
+from peewee import (
+    CharField,
+    FloatField,
+    IntegerField,
+    Model,
+    SqliteDatabase,
+    fn,
+)
 
 _DB_PATH = os.environ.get("FAUCET_DB", "/faucet/faucet.db")
 database = SqliteDatabase(None)
+
+# Rolling window for the per-IP daily limit and Ip-claim retention (seconds).
+DAY_SECONDS = 86_400
+# How long per-day usage counts are kept (the trailing-year cap window).
+USAGE_RETENTION_DAYS = 365
+
+
+def day_ordinal(ts: float) -> int:
+    """The UTC day number (days since the Unix epoch) for ``ts`` — the key used
+    to bucket usage counts. Timezone-free and stable."""
+    return int(ts // DAY_SECONDS)
 
 
 class Payout(Model):
@@ -30,6 +61,40 @@ class Payout(Model):
         database = database
 
 
+class IpClaim(Model):
+    """The most recent successful withdrawal time for a salted IP hash on a
+    network. One row per ``(net, ip_hash)`` (unique), upserted on each success."""
+
+    net = CharField()
+    ip_hash = CharField()
+    last_claim_at = FloatField()
+
+    class Meta:
+        database = database
+        indexes = ((("net", "ip_hash"), True),)  # unique
+
+
+class DailyUsage(Model):
+    """Successful-withdrawal count for a network on one UTC day."""
+
+    net = CharField()
+    day = IntegerField()  # day_ordinal()
+    count = IntegerField(default=0)
+
+    class Meta:
+        database = database
+        indexes = ((("net", "day"), True),)  # unique
+
+
+class Maintenance(Model):
+    """Singleton row coordinating the daily purge across worker processes."""
+
+    last_run = FloatField(default=0.0)
+
+    class Meta:
+        database = database
+
+
 def init_db(path: str | None = None) -> None:
     """Bind and create the schema. Safe to call more than once."""
     db_path = path or _DB_PATH
@@ -39,7 +104,10 @@ def init_db(path: str | None = None) -> None:
     database.init(db_path)
     if database.is_closed():
         database.connect(reuse_if_open=True)
-    database.create_tables([Payout])
+    database.create_tables([Payout, IpClaim, DailyUsage, Maintenance])
+    # Seed the single maintenance row (last_run=0 => the first claim wins).
+    if not Maintenance.select().exists():
+        Maintenance.create(last_run=0.0)
 
 
 def record(
@@ -65,5 +133,118 @@ def recent(net: str, limit: int) -> list["Payout"]:
 
 
 def purge(net: str) -> int:
-    """Delete every payout row for ``net``. Returns the number removed."""
+    """Delete every payout row for ``net``. Returns the number removed.
+
+    Note: this intentionally does NOT touch :class:`DailyUsage` — usage history
+    survives a network reset (it models demand, not chain state). The short-lived
+    :class:`IpClaim` rows self-expire within a day, so a reset leaves them be too.
+    """
     return Payout.delete().where(Payout.net == net).execute()
+
+
+# -- per-IP daily limit ------------------------------------------------------
+
+
+def record_ip_claim(net: str, ip_hash: str, ts: float | None = None) -> None:
+    """Upsert the last successful-withdrawal time for ``(net, ip_hash)``."""
+    when = time.time() if ts is None else ts
+    (
+        IpClaim.insert(net=net, ip_hash=ip_hash, last_claim_at=when)
+        .on_conflict(
+            conflict_target=[IpClaim.net, IpClaim.ip_hash],
+            update={IpClaim.last_claim_at: when},
+        )
+        .execute()
+    )
+
+
+def last_ip_claim(net: str, ip_hash: str) -> float | None:
+    """The most recent successful-withdrawal time for ``(net, ip_hash)``, or
+    ``None`` if this IP has never had a successful withdrawal on ``net``."""
+    row = IpClaim.get_or_none((IpClaim.net == net) & (IpClaim.ip_hash == ip_hash))
+    return row.last_claim_at if row else None
+
+
+def purge_ip_claims(now: float | None = None) -> int:
+    """Delete IP-claim rows older than the 24h window. Returns the number removed."""
+    cutoff = (time.time() if now is None else now) - DAY_SECONDS
+    return IpClaim.delete().where(IpClaim.last_claim_at < cutoff).execute()
+
+
+# -- usage history (per-day counts) ------------------------------------------
+
+
+def increment_usage(net: str, ts: float | None = None) -> None:
+    """Add one to ``net``'s successful-withdrawal count for the current UTC day."""
+    day = day_ordinal(time.time() if ts is None else ts)
+    updated = (
+        DailyUsage.update(count=DailyUsage.count + 1)
+        .where((DailyUsage.net == net) & (DailyUsage.day == day))
+        .execute()
+    )
+    if not updated:
+        # First withdrawal of the day; on_conflict guards a concurrent insert.
+        (
+            DailyUsage.insert(net=net, day=day, count=1)
+            .on_conflict(
+                conflict_target=[DailyUsage.net, DailyUsage.day],
+                update={DailyUsage.count: DailyUsage.count + 1},
+            )
+            .execute()
+        )
+
+
+def usage_stats(net: str, now: float | None = None) -> tuple[int, int]:
+    """``(expected_365, historical_max)`` for ``net``.
+
+    ``historical_max`` is the busiest single day's count ever recorded.
+    ``expected_365`` is the expected number of withdrawals over the next 365 days:
+    the trailing-year sum where each of the 365 days contributes its actual count
+    if logged, else the missing-day fill value ``max(historical_max, 10)``. This
+    equals (trailing-year daily average) x 365, and is always >= 365*10, so the
+    caller can divide the balance by it without a zero-division guard.
+    """
+    today = day_ordinal(time.time() if now is None else now)
+    start = today - 364  # inclusive 365-day window
+    counts = {
+        row.day: row.count
+        for row in DailyUsage.select().where(
+            (DailyUsage.net == net)
+            & (DailyUsage.day >= start)
+            & (DailyUsage.day <= today)
+        )
+    }
+    historical_max = (
+        DailyUsage.select(fn.MAX(DailyUsage.count))
+        .where(DailyUsage.net == net)
+        .scalar()
+        or 0
+    )
+    fill = max(historical_max, 10)
+    expected = sum(counts.get(day, fill) for day in range(start, today + 1))
+    return expected, historical_max
+
+
+def purge_usage(now: float | None = None) -> int:
+    """Delete usage rows older than the retention window. Returns rows removed."""
+    cutoff = day_ordinal(time.time() if now is None else now) - USAGE_RETENTION_DAYS
+    return DailyUsage.delete().where(DailyUsage.day < cutoff).execute()
+
+
+# -- maintenance coordination ------------------------------------------------
+
+
+def claim_maintenance_run(now: float | None = None, interval: int = DAY_SECONDS) -> bool:
+    """Atomically claim the once-per-``interval`` maintenance run.
+
+    Returns ``True`` to exactly one caller per interval (the one whose UPDATE
+    flips ``last_run``), so the in-process thread runs the purge once a day even
+    with multiple gunicorn workers racing.
+    """
+    when = time.time() if now is None else now
+    updated = (
+        Maintenance.update(last_run=when)
+        .where(Maintenance.last_run <= when - interval)
+        .execute()
+    )
+    return updated == 1

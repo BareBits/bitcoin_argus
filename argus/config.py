@@ -700,6 +700,27 @@ class FaucetCfg(_Base):
     # How many recent payouts to list on the faucet page.
     recent_limit: int = Field(default=50, ge=1, le=1000)
 
+    # -- speed-limit rules (see argus.faucet.rules) ------------------------
+    # Independent validation rules, combined with AND on every request: a payout
+    # needs ALL enabled rules to pass, and the page reports every rule that failed
+    # (with a "try again in X" for time-based ones). The amount policy (< 1 BTC by
+    # default, see ``approval_function``) always runs in addition to these.
+
+    # One successful withdrawal per client IP per rolling 24h (per network). A
+    # salted hash of the IP + the last-withdrawal time is kept in the faucet DB.
+    one_per_ip_per_day: bool = True
+    # Cap a request at the per-day maximum = faucet balance / expected withdrawals
+    # over the next 365 days (the trailing-year daily average; missing days assume
+    # max(busiest day ever, 10)). Shown on the page in BTC + sats.
+    max_amount_per_day: bool = True
+    # Cap any single request at a fraction of the faucet's CURRENT balance, so one
+    # request can't drain it even before the yearly-averaged cap bites.
+    per_request_balance_cap: bool = True
+    balance_cap_fraction: float = Field(default=0.10, gt=0, le=1)
+    # Reject dust requests below a floor (anti-spam).
+    min_claim_enabled: bool = True
+    min_claim_sat: int = Field(default=5000, ge=1)
+
     @field_validator("approval_function")
     @classmethod
     def _check_approval(cls, v: str | None) -> str | None:

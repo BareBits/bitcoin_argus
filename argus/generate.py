@@ -21,7 +21,11 @@ from .onionkey import OnionKey
 from .ports import allocate
 from .reset import generate_reset
 from .resources import log_options, resolve
-from .secrets import load_or_create, load_or_create_onion_key
+from .secrets import (
+    load_or_create,
+    load_or_create_faucet_salt,
+    load_or_create_onion_key,
+)
 from .shared import generate_shared
 from .tor import generate_tor
 from .web_gen import generate_web
@@ -198,7 +202,14 @@ def generate(
             dirs.append(tor_dir)
 
     # The dashboard spans all networks too; generated alongside the shared layer.
-    web_dir = generate_web(cfg, output_dir, config_path, onion_hostname)
+    # The faucet hashes visitor IPs with an install-wide salt for its per-IP daily
+    # limit; create it once when any faucet is enabled.
+    faucet_ip_salt = (
+        load_or_create_faucet_salt(secrets_dir) if cfg.faucet_networks() else None
+    )
+    web_dir = generate_web(
+        cfg, output_dir, config_path, onion_hostname, faucet_ip_salt
+    )
     if web_dir is not None:
         dirs.append(web_dir)
 
