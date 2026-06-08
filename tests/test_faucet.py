@@ -326,16 +326,17 @@ def test_unknown_network_404(faucet_client):
 
 
 def test_post_success_dispenses_and_records(faucet_client):
+    # 0.001 BTC is within the fresh-faucet daily cap (5 BTC / 3650 ≈ 0.00137 BTC).
     resp = faucet_client.post(
         "/regtest/faucet",
-        data={"address": ADDR_REGTEST_P2WPKH, "amount": "0.25"},
+        data={"address": ADDR_REGTEST_P2WPKH, "amount": "0.001"},
     )
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
     assert "abc123txid" in body
-    assert _FakeLnd.sent == [("regtest", ADDR_REGTEST_P2WPKH, 25_000_000, 2)]
+    assert _FakeLnd.sent == [("regtest", ADDR_REGTEST_P2WPKH, 100_000, 2)]
     # Recorded and shown in the recent table.
-    assert "0.25000000" in body
+    assert "0.00100000" in body
 
 
 def test_post_invalid_address(faucet_client):
@@ -364,3 +365,296 @@ def test_post_subsatoshi_rejected(faucet_client):
     body = resp.get_data(as_text=True)
     assert "8 decimal places" in body
     assert _FakeLnd.sent == []
+
+
+# --- speed-limit store helpers ----------------------------------------------
+
+
+def _fresh_store(tmp_path):
+    store.init_db(str(tmp_path / "faucet.db"))
+    # The peewee DB is a process-global singleton; wipe the rule tables so a test
+    # that reuses a prior test's binding still starts clean.
+    store.IpClaim.delete().execute()
+    store.DailyUsage.delete().execute()
+    return store
+
+
+NOW = 1_000_000_000.0
+
+
+def test_ip_claim_record_last_and_purge(tmp_path):
+    s = _fresh_store(tmp_path)
+    assert s.last_ip_claim("regtest", "h1") is None
+    s.record_ip_claim("regtest", "h1", ts=NOW)
+    assert s.last_ip_claim("regtest", "h1") == NOW
+    # Upsert keeps a single row and advances the timestamp.
+    s.record_ip_claim("regtest", "h1", ts=NOW + 100)
+    assert s.last_ip_claim("regtest", "h1") == NOW + 100
+    assert s.IpClaim.select().where(s.IpClaim.ip_hash == "h1").count() == 1
+    # Scoped per network.
+    assert s.last_ip_claim("signet", "h1") is None
+    # Purge drops rows older than 24h.
+    s.record_ip_claim("regtest", "old", ts=NOW - 86_400 - 1)
+    removed = s.purge_ip_claims(now=NOW + 100)
+    assert removed == 1
+    assert s.last_ip_claim("regtest", "old") is None
+    assert s.last_ip_claim("regtest", "h1") == NOW + 100
+
+
+def test_usage_stats_formula(tmp_path):
+    s = _fresh_store(tmp_path)
+    # Fresh: every day is a missing day filled with the floor of 10 -> 365*10.
+    assert s.usage_stats("regtest", now=NOW) == (3650, 0)
+    # One withdrawal today: today contributes its actual 1, the other 364 the floor.
+    s.increment_usage("regtest", ts=NOW)
+    assert s.usage_stats("regtest", now=NOW) == (1 + 364 * 10, 1)
+    # Twelve today: floor rises to max(busiest day, 10) = 12, so 12 every day.
+    for _ in range(11):
+        s.increment_usage("regtest", ts=NOW)
+    assert s.usage_stats("regtest", now=NOW) == (12 * 365, 12)
+    # Usage is per network.
+    assert s.usage_stats("signet", now=NOW) == (3650, 0)
+
+
+def test_purge_usage_drops_old_days(tmp_path):
+    s = _fresh_store(tmp_path)
+    s.increment_usage("regtest", ts=NOW)  # today
+    s.increment_usage("regtest", ts=NOW - 400 * 86_400)  # >1 year ago
+    assert s.DailyUsage.select().count() == 2
+    removed = s.purge_usage(now=NOW)
+    assert removed == 1
+    assert s.DailyUsage.select().count() == 1
+
+
+def test_claim_maintenance_run_is_once_per_day(tmp_path):
+    s = _fresh_store(tmp_path)
+    assert s.claim_maintenance_run(now=NOW) is True
+    # A second claim the same day loses.
+    assert s.claim_maintenance_run(now=NOW + 10) is False
+    # A day later it wins again.
+    assert s.claim_maintenance_run(now=NOW + 86_400) is True
+
+
+# --- IP hashing -------------------------------------------------------------
+
+
+def test_hash_ip_deterministic_and_salted():
+    from argus.faucet.ip import canonical_ip, hash_ip
+
+    a = hash_ip("1.2.3.4", "salt")
+    assert a == hash_ip("1.2.3.4", "salt")  # deterministic
+    assert a != hash_ip("1.2.3.5", "salt")  # different IP
+    assert a != hash_ip("1.2.3.4", "other")  # different salt
+    # IPv6 is canonicalised so equivalent forms hash alike.
+    assert hash_ip("::1", "s") == hash_ip("0:0:0:0:0:0:0:1", "s")
+    assert canonical_ip("nonsense") is None
+    # No IP or no salt => no hash (the per-IP rule then fails open).
+    assert hash_ip(None, "salt") is None
+    assert hash_ip("1.2.3.4", None) is None
+
+
+# --- rule evaluation --------------------------------------------------------
+
+
+def _faucet_cfg(**overrides):
+    from argus.config import FaucetCfg
+
+    return FaucetCfg(**overrides)
+
+
+def _limits(cfg, balance):
+    from argus.faucet import rules
+
+    return rules.compute_limits(cfg, "regtest", balance, NOW)
+
+
+def _rule_ctx(cfg, balance, requested_sat, ip_hash="h"):
+    from argus.faucet import rules
+
+    return rules.RuleContext(
+        net_key="regtest",
+        ip_hash=ip_hash,
+        requested_sat=requested_sat,
+        balance_sat=balance,
+        now=NOW,
+        limits=_limits(cfg, balance),
+    )
+
+
+def test_compute_limits_fresh_faucet(tmp_path):
+    _fresh_store(tmp_path)
+    cfg = _faucet_cfg()
+    lim = _limits(cfg, 500_000_000)  # 5 BTC
+    assert lim.daily_cap_sat == 500_000_000 // 3650  # 136986
+    assert lim.balance_cap_sat == 50_000_000  # 10%
+    assert lim.min_claim_sat == 5000
+    assert lim.max_request_sat == min(136_986, 50_000_000)
+
+
+def test_compute_limits_balance_unknown(tmp_path):
+    _fresh_store(tmp_path)
+    cfg = _faucet_cfg()
+    lim = _limits(cfg, None)
+    # Balance-derived caps drop out; min-claim still stands.
+    assert lim.daily_cap_sat is None
+    assert lim.balance_cap_sat is None
+    assert lim.max_request_sat is None
+    assert lim.min_claim_sat == 5000
+
+
+def test_rule_min_claim(tmp_path):
+    from argus.faucet import rules
+
+    _fresh_store(tmp_path)
+    cfg = _faucet_cfg()
+    fails = rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 4999))
+    assert [f.label for f in fails] == ["Minimum claim"]
+    assert rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 5000)) == []
+
+
+def test_rule_balance_cap(tmp_path):
+    from argus.faucet import rules
+
+    _fresh_store(tmp_path)
+    cfg = _faucet_cfg(max_amount_per_day=False)  # isolate the balance cap
+    # 60M > 10% of 500M (=50M).
+    fails = rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 60_000_000))
+    assert [f.label for f in fails] == ["Per-request balance cap"]
+
+
+def test_rule_one_per_ip_per_day_and_retry(tmp_path):
+    from argus.faucet import rules
+
+    s = _fresh_store(tmp_path)
+    cfg = _faucet_cfg()
+    s.record_ip_claim("regtest", "h", ts=NOW - 3600)  # claimed an hour ago
+    fails = rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 100_000))
+    assert [f.label for f in fails] == ["One claim per 24 hours"]
+    assert fails[0].retry_after == NOW - 3600 + 86_400
+    # A different IP is unaffected.
+    assert rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 100_000, ip_hash="other")) == []
+    # Unknown IP (no salt) fails open.
+    assert rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 100_000, ip_hash=None)) == []
+
+
+def test_rules_aggregate_all_failures(tmp_path):
+    from argus.faucet import rules
+
+    _fresh_store(tmp_path)
+    cfg = _faucet_cfg()
+    # 5 BTC: over the daily cap AND over the per-request balance cap at once.
+    fails = rules.evaluate(cfg, _rule_ctx(cfg, 500_000_000, 500_000_000))
+    labels = {f.label for f in fails}
+    assert "Daily maximum" in labels
+    assert "Per-request balance cap" in labels
+
+
+# --- self-mine notice -------------------------------------------------------
+
+
+def test_faucet_mine_help_per_chain():
+    from argus.web.content import faucet_mine_help
+
+    ports = {"bitcoind_p2p": 18444}
+    regtest = faucet_mine_help("regtest", "x.com", ports)
+    assert regtest is not None and "generatetoaddress" in regtest.command
+    assert "-regtest" in regtest.command
+    t3 = faucet_mine_help("testnet3", "x.com", {"bitcoind_p2p": 18333})
+    assert t3 is not None and "while" in t3.command and "-chain=test" in t3.command
+    # Signets need the operator's signing key — no self-mine notice.
+    assert faucet_mine_help("signet", "x.com", {"bitcoind_p2p": 38333}) is None
+    # No public P2P port => can't peer => no notice.
+    assert faucet_mine_help("regtest", "x.com", ports, p2p_public=False) is None
+
+
+# --- maintenance ------------------------------------------------------------
+
+
+def test_run_maintenance_purges(tmp_path):
+    from argus.faucet import maintenance
+
+    s = _fresh_store(tmp_path)
+    s.record_ip_claim("regtest", "old", ts=NOW - 200_000)
+    s.increment_usage("regtest", ts=NOW - 400 * 86_400)
+    ip_removed, usage_removed = maintenance.run_maintenance(now=NOW)
+    assert ip_removed == 1
+    assert usage_removed == 1
+
+
+# --- Flask app: speed limits end-to-end -------------------------------------
+
+
+def test_post_over_daily_cap_lists_all_unmet_rules(faucet_client):
+    # 5 BTC trips the amount policy, the daily maximum, and the balance cap.
+    resp = faucet_client.post(
+        "/regtest/faucet", data={"address": ADDR_REGTEST_P2WPKH, "amount": "5"}
+    )
+    body = resp.get_data(as_text=True)
+    assert "Amount policy" in body
+    assert "Daily maximum" in body
+    assert "Per-request balance cap" in body
+    assert _FakeLnd.sent == []
+
+
+def test_post_below_min_claim(faucet_client):
+    resp = faucet_client.post(
+        "/regtest/faucet",
+        data={"address": ADDR_REGTEST_P2WPKH, "amount": "0.00000001"},  # 1 sat
+    )
+    body = resp.get_data(as_text=True)
+    assert "Minimum claim" in body
+    assert _FakeLnd.sent == []
+
+
+def test_one_per_ip_blocks_second_claim(tmp_path, monkeypatch):
+    monkeypatch.setattr("argus.faucet.app.FaucetLnd", _FakeLnd)
+    monkeypatch.setattr("argus.faucet.app._IP_SALT", "test-salt")
+    _FakeLnd.sent = []
+    data = make({"regtest": {"enabled": True, "bitcart": {"enabled": False}}},
+                hostname="x.com")
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(data))
+    app = create_app(str(cfg_path), db_path=str(tmp_path / "faucet.db"),
+                     start_maintenance=False)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    hdr = {"X-Forwarded-For": "203.0.113.7"}
+    ok = client.post("/regtest/faucet",
+                     data={"address": ADDR_REGTEST_P2WPKH, "amount": "0.001"},
+                     headers=hdr)
+    assert "abc123txid" in ok.get_data(as_text=True)
+    # Second claim from the same IP is blocked with a retry hint.
+    again = client.post("/regtest/faucet",
+                        data={"address": ADDR_REGTEST_P2WPKH, "amount": "0.001"},
+                        headers=hdr)
+    body = again.get_data(as_text=True)
+    assert "One claim per 24 hours" in body
+    assert "try again in" in body
+    # A different IP can still claim.
+    other = client.post("/regtest/faucet",
+                        data={"address": ADDR_REGTEST_P2WPKH, "amount": "0.001"},
+                        headers={"X-Forwarded-For": "203.0.113.8"})
+    assert "abc123txid" in other.get_data(as_text=True)
+
+
+def test_faucet_page_shows_limits_and_mine_notice(faucet_client):
+    body = faucet_client.get("/regtest/faucet").get_data(as_text=True)
+    # Limits panel: the fresh-faucet daily cap in BTC and sats.
+    assert "Request limits" in body
+    assert "0.00136986" in body  # 5 BTC / 3650, in BTC
+    assert "136,986" in body  # …and in sats
+    assert "5,000" in body  # minimum claim in sats
+    # Regtest is self-mineable, so the notice and its recipe appear.
+    assert "Mine your own" in body
+    assert "generatetoaddress" in body
+
+
+def test_web_compose_injects_ip_salt(tmp_path):
+    data = make({"regtest": {"enabled": True, "bitcart": {"enabled": False}}})
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(data))
+    cfg = load_config(cfg_path)
+    web_dir = generate_web(cfg, tmp_path / "g", cfg_path, None, "deadbeefsalt")
+    compose = yaml.safe_load((web_dir / "docker-compose.yml").read_text())
+    assert compose["services"]["faucet"]["environment"]["FAUCET_IP_SALT"] == "deadbeefsalt"

@@ -26,16 +26,22 @@ from ..config import ArgusConfig, load_config
 from ..constants import NETWORK_SPECS
 from ..ports import allocate
 from ..web.app import WARNING_HTML, _human_bytes
-from ..web.content import VARIANTS
+from ..web.content import VARIANTS, faucet_mine_help
 from . import approval as approval_mod
 from . import donations as donations_mod
+from . import maintenance as maintenance_mod
 from . import mempool as mempool_mod
+from . import rules as rules_mod
 from . import store
 from .addresses import is_valid_address
+from .ip import hash_ip
 from .lnd import FaucetLnd, FaucetLndError
 
 _DEFAULT_CONFIG = os.environ.get("CONFIG_PATH", "config.yaml")
 _ONION_HOSTNAME = os.environ.get("ONION_HOSTNAME") or None
+# Per-install secret used to hash visitor IPs for the per-IP daily limit. Absent
+# in unit tests (the per-IP rule then fails open).
+_IP_SALT = os.environ.get("FAUCET_IP_SALT") or None
 
 _FAUCET_DIR = Path(__file__).resolve().parent
 _WEB_DIR = _FAUCET_DIR.parent / "web"
@@ -65,15 +71,43 @@ def _btc_to_sats(amount_raw: str) -> int | None:
     return int(sats)
 
 
-def create_app(config_path: str | None = None, db_path: str | None = None) -> Flask:
+def _fmt_amt(sats: int | None) -> dict | None:
+    """A ``{"btc", "sats"}`` display pair for a sat amount, or None."""
+    if sats is None:
+        return None
+    return {"btc": _sats_to_btc(sats), "sats": f"{sats:,}"}
+
+
+def _human_delta(seconds: float) -> str:
+    """A compact 'Xh Ym' rendering of a positive duration, for 'try again in …'."""
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes = rem // 60
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    if minutes:
+        return f"{minutes}m"
+    return "less than a minute"
+
+
+def create_app(
+    config_path: str | None = None,
+    db_path: str | None = None,
+    start_maintenance: bool = True,
+) -> Flask:
     app = Flask(
         __name__,
         static_folder=str(_WEB_DIR / "static"),
         static_url_path="/static",
         template_folder=str(_FAUCET_DIR / "templates"),
     )
-    # Honour the shared Caddy's forwarded scheme/host (mirrors the dashboard).
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+    # Honour the shared Caddy's forwarded scheme/host AND client IP. x_for=1 is
+    # essential for the per-IP daily limit: without it request.remote_addr is
+    # Caddy's address, not the visitor's. Caddy's reverse_proxy forwards
+    # X-Forwarded-For by default, and it is the single trusted hop in front of us.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     # Resolve faucet templates first, then fall back to the dashboard's (base.html,
     # footer.html, themes) so the page shares the dashboard's chrome.
     app.jinja_loader = ChoiceLoader(
@@ -87,6 +121,10 @@ def create_app(config_path: str | None = None, db_path: str | None = None) -> Fl
     cfg: ArgusConfig = load_config(config_path or _DEFAULT_CONFIG)
     port_map = allocate(cfg)
     store.init_db(db_path)
+    # Daily purge of expired per-IP and old usage rows (in-process daemon thread,
+    # coordinated through the DB so it runs once a day across gunicorn workers).
+    if start_maintenance:
+        maintenance_mod.start_maintenance_thread()
 
     # -- theming (shared cookie with the dashboard) ------------------------
 
@@ -163,21 +201,34 @@ def create_app(config_path: str | None = None, db_path: str | None = None) -> Fl
             )
         return rows
 
-    def _process(net_key, net, spec, ports, address, amount_raw) -> dict:
-        """Run one dispense request; returns a ``result`` dict for the template."""
+    def _balance(net_key, chain) -> int | None:
+        """The faucet node's confirmed on-chain balance for ``net_key``, or None
+        if it can't be read (the balance-derived rules then fail open)."""
+        try:
+            return FaucetLnd(net_key, chain).balance_sat()
+        except FaucetLndError:
+            return None
+
+    def _process(
+        net_key, net, spec, ports, address, amount_raw, client_ip, balance_sat, limits, now
+    ) -> dict:
+        """Run one dispense request; returns a ``result`` dict for the template.
+
+        Every enabled rule is checked and ALL failures are collected (not just the
+        first), so the user sees the full list of unmet requirements at once. The
+        amount policy (the configurable approval function) is evaluated alongside
+        the speed-limit rules and folded into the same ``failures`` list.
+        """
         # 1. The address must be valid for this chain (before anything else).
         if not is_valid_address(address, spec.chain):
             return {
                 "status": "invalid_address",
                 "message": "That is not a valid address for this network.",
             }
-        # Read the node balance once, to pass to the policy and (later) the send.
-        lnd = FaucetLnd(net_key, spec.chain)
-        try:
-            balance_sat: int | None = lnd.balance_sat()
-        except FaucetLndError:
-            balance_sat = None
-        # 2. The single configurable approval function decides.
+
+        failures: list[dict] = []
+
+        # 2. The configurable approval function (the amount policy, e.g. < 1 BTC).
         decision = _approval_for(net)(
             approval_mod.FaucetContext(
                 net_key=net_key,
@@ -188,22 +239,59 @@ def create_app(config_path: str | None = None, db_path: str | None = None) -> Fl
             )
         )
         if not decision.approved:
-            return {"status": "disapproved", "message": decision.reason}
-        # 3. Mechanical conversion to whole sats (positive, ≤ 8 decimal places).
+            failures.append({"label": "Amount policy", "reason": decision.reason})
+
+        # 3. Parse to whole sats (positive, ≤ 8 decimal places). When that fails the
+        #    amount is fundamentally invalid, so the speed-limit rules can't run; add
+        #    a format error only if the policy hasn't already objected to the amount.
         sats = _btc_to_sats(amount_raw)
-        if sats is None or sats <= 0:
-            return {
-                "status": "disapproved",
-                "message": "The amount must be a positive number with at most "
-                "8 decimal places.",
-            }
-        # 4. Dispense via the node; surface node errors as a payment failure.
+        if sats is None:
+            if decision.approved:
+                failures.append(
+                    {
+                        "label": "Amount format",
+                        "reason": "The amount must be a positive number with at "
+                        "most 8 decimal places.",
+                    }
+                )
+        else:
+            ctx = rules_mod.RuleContext(
+                net_key=net_key,
+                ip_hash=hash_ip(client_ip, _IP_SALT),
+                requested_sat=sats,
+                balance_sat=balance_sat,
+                now=now,
+                limits=limits,
+            )
+            for outcome in rules_mod.evaluate(net.faucet, ctx):
+                entry = {"label": outcome.label, "reason": outcome.reason}
+                if outcome.retry_after is not None:
+                    entry["retry_in"] = _human_delta(outcome.retry_after - now)
+                    entry["retry_at"] = time.strftime(
+                        "%H:%M UTC", time.gmtime(outcome.retry_after)
+                    )
+                failures.append(entry)
+
+        # 4. AND across every rule: any failure blocks the payout.
+        if failures:
+            return {"status": "disapproved", "failures": failures}
+
+        # 5. Dispense via the node; surface node errors as a payment failure.
         try:
-            txid = lnd.send(address, sats, net.faucet.fee_sat_per_vbyte)
+            txid = FaucetLnd(net_key, spec.chain).send(
+                address, sats, net.faucet.fee_sat_per_vbyte
+            )
         except FaucetLndError as exc:
             return {"status": "payment_failure", "message": str(exc)}
+
+        # 6. Record the payout, the per-IP claim (for the daily limit), and the
+        #    day's usage count (for the max-per-day cap) — all on success only.
         amount_btc = _sats_to_btc(sats)
         store.record(net_key, txid, amount_btc, address)
+        ip_hash = hash_ip(client_ip, _IP_SALT)
+        if ip_hash is not None:
+            store.record_ip_claim(net_key, ip_hash, now)
+        store.increment_usage(net_key, now)
         base = mempool_mod.explorer_base(cfg, net_key, ports)
         return {
             "status": "success",
@@ -224,21 +312,34 @@ def create_app(config_path: str | None = None, db_path: str | None = None) -> Fl
         net, spec = found
         ports = port_map.get(net_key, {})
 
+        # Read the balance once and derive the current limits — used both for the
+        # page's limits panel and (on POST) for evaluating the amount-cap rules.
+        balance_sat = _balance(net_key, spec.chain)
+        now = time.time()
+        limits = rules_mod.compute_limits(net.faucet, net_key, balance_sat, now)
+
         result = None
         form_address = ""
         form_amount = ""
         if request.method == "POST":
             form_address = (request.form.get("address") or "").strip()
             form_amount = (request.form.get("amount") or "").strip()
-            result = _process(net_key, net, spec, ports, form_address, form_amount)
+            result = _process(
+                net_key, net, spec, ports, form_address, form_amount,
+                request.remote_addr, balance_sat, limits, now,
+            )
             if result["status"] == "success":
                 form_address = form_amount = ""  # clear on success
 
-        lnd = FaucetLnd(net_key, spec.chain)
-        try:
-            balance_sat: int | None = lnd.balance_sat()
-        except FaucetLndError:
-            balance_sat = None
+        limits_view = {
+            "one_per_day": limits.one_per_day,
+            "daily_cap": _fmt_amt(limits.daily_cap_sat),
+            "balance_cap": _fmt_amt(limits.balance_cap_sat),
+            "balance_cap_pct": int(round(net.faucet.balance_cap_fraction * 100)),
+            "min_claim": _fmt_amt(limits.min_claim_sat),
+            "max_request": _fmt_amt(limits.max_request_sat),
+            "balance_known": balance_sat is not None,
+        }
 
         return render_template(
             "faucet.html",
@@ -253,6 +354,10 @@ def create_app(config_path: str | None = None, db_path: str | None = None) -> Fl
             form_address=form_address,
             form_amount=form_amount,
             recent=_recent_rows(net_key, net.faucet.recent_limit, ports),
+            limits=limits_view,
+            mine_help=faucet_mine_help(
+                net_key, cfg.global_.hostname, ports, net.bitcoind.p2p_public
+            ),
         )
 
     @app.route("/healthz")

@@ -574,3 +574,74 @@ def attach_commands(
         )
 
     return cmds
+
+
+@dataclass(frozen=True)
+class MineHelp:
+    """Instructions for a visitor to produce their OWN coins for a chain they can
+    mine without an operator secret. Shown on the faucet page so an empty faucet
+    is never a dead end."""
+
+    intro: str
+    command: str
+    note: str
+
+
+def faucet_mine_help(
+    net_key: str,
+    hostname: str,
+    ports: dict[str, int],
+    p2p_public: bool = True,
+) -> MineHelp | None:
+    """Self-mine instructions for ``net_key``'s faucet page, or ``None`` when a
+    visitor cannot mine it themselves.
+
+    Only the non-signet chains qualify: regtest (trivial difficulty) and
+    testnet3/testnet4 (real proof-of-work, but the 20-minute minimum-difficulty
+    rule lets a CPU find the occasional block). The signets need the operator's
+    block-signing key, so they get no notice. Mining also needs a public P2P port
+    to peer your node with ours.
+    """
+    spec = NETWORK_SPECS[net_key]
+    p2p = ports.get("bitcoind_p2p")
+    if spec.is_signet or not p2p_public or p2p is None:
+        return None
+
+    chain = spec.chain
+    if net_key == "regtest":
+        return MineHelp(
+            intro=(
+                "Faucet empty, or just want coins instantly? On regtest you can "
+                "mine your own — peer your node with ours, then generate blocks "
+                "straight to your wallet:"
+            ),
+            command=(
+                f"bitcoind -regtest -addnode={hostname}:{p2p} -daemon\n"
+                f"bitcoin-cli -regtest generatetoaddress 1 "
+                f"$(bitcoin-cli -regtest getnewaddress)"
+            ),
+            note=(
+                "Please be considerate — this is a shared chain, so mine only the "
+                "blocks you need. The P2P port opens once the node's Lightning "
+                "channels are set up, so it may be briefly closed right after a "
+                "fresh deploy."
+            ),
+        )
+
+    # testnet3 / testnet4 — real proof-of-work, CPU-mineable via the 20-min rule.
+    return MineHelp(
+        intro=(
+            f"Faucet empty? You can CPU-mine your own {net_key} coins — peer your "
+            "node with ours, then grind blocks to your address in a loop:"
+        ),
+        command=(
+            f"bitcoind -chain={chain} -addnode={hostname}:{p2p} -daemon\n"
+            f"while :; do bitcoin-cli -chain={chain} generatetoaddress 1 "
+            f"<your-address> 10000000; done"
+        ),
+        note=(
+            "This relies on testnet's 20-minute minimum-difficulty rule: when no "
+            "block has arrived for 20 minutes, the next one can be CPU-mined. It "
+            "can still be slow — you may grind for a while before a block lands."
+        ),
+    )

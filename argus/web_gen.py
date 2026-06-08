@@ -51,6 +51,7 @@ def _compose(
     onion_hostname: str | None,
     lnd_net_keys: list[str],
     faucet_net_keys: list[str],
+    faucet_ip_salt: str | None = None,
 ) -> dict:
     web_env = {
         "DOCKER_HOST": "tcp://socket-proxy:2375",
@@ -146,6 +147,10 @@ def _compose(
         }
         if onion_hostname:
             faucet_env["ONION_HOSTNAME"] = onion_hostname
+        # Install-wide salt for hashing visitor IPs (per-IP daily limit). Stable
+        # across regenerations so the stored hashes keep matching.
+        if faucet_ip_salt:
+            faucet_env["FAUCET_IP_SALT"] = faucet_ip_salt
 
         faucet_volumes = [
             "faucet_data:/faucet",
@@ -206,6 +211,7 @@ def generate_web(
     output_dir: Path,
     config_path: str | Path,
     onion_hostname: str | None = None,
+    faucet_ip_salt: str | None = None,
 ) -> Path | None:
     """Generate ``generated/web/``. Returns its dir, or None if web is disabled."""
     if not cfg.web.enabled:
@@ -222,7 +228,9 @@ def generate_web(
     # The faucet is a separate service joining each faucet-enabled network (for
     # LND reachability + its read-only data volume).
     faucet_net_keys = [k for k, _ in cfg.faucet_networks()]
-    compose = _compose(onion_hostname, lnd_net_keys, faucet_net_keys)
+    compose = _compose(
+        onion_hostname, lnd_net_keys, faucet_net_keys, faucet_ip_salt
+    )
     rotation, log_block = global_log(cfg)
     if rotation:
         for svc in compose["services"].values():

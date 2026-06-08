@@ -43,6 +43,19 @@
   .faucet-result code { word-break: break-all; }
   .faucet-recent td, .faucet-recent th { font-size: 0.84rem; }
   .faucet-recent .mono { word-break: break-all; }
+  .faucet-fails { margin: 0.5rem 0 0; padding-left: 1.2rem; }
+  .faucet-fails li { margin-bottom: 0.3rem; }
+  .faucet-fails em { display: block; opacity: 0.85; font-size: 0.85rem; }
+  .faucet-limits { margin-top: 1.4rem; }
+  .faucet-limits ul { padding-left: 1.1rem; margin: 0.4rem 0; }
+  .faucet-limits li { margin-bottom: 0.3rem; font-size: 0.9rem; }
+  .faucet-limits .big { font-size: 1.3rem; font-weight: 600; }
+  .mine-notice { border-color: var(--accent, #0d6efd); background: rgba(13,110,253,0.08); }
+  .mine-notice pre.mine-cmd {
+    margin: 0.5rem 0; padding: 0.6rem 0.8rem; overflow-x: auto;
+    background: var(--bg, #0b1020); border: 1px solid var(--line-bright, #888);
+    border-radius: 3px; font-size: 0.85rem; white-space: pre;
+  }
 </style>
 {% endblock %}
 
@@ -72,6 +85,15 @@
 </div>
 {% endif %}
 
+{% if mine_help %}
+<div class="faucet-result mine-notice" role="note">
+  <strong>⛏️ Mine your own {{ net_title }} coins</strong>
+  <p>{{ mine_help.intro }}</p>
+  <pre class="mine-cmd"><code>{{ mine_help.command }}</code></pre>
+  <p class="cache-note">{{ mine_help.note }}</p>
+</div>
+{% endif %}
+
 {% if result %}
   {% if result.status == 'success' %}
   <div class="faucet-result success" role="status">
@@ -95,7 +117,20 @@
   </div>
   {% else %}
   <div class="faucet-result warn" role="alert">
-    <strong>🚫 Request not approved.</strong> {{ result.message }}
+    <strong>🚫 Request not approved.</strong>
+    Your request didn't meet
+    {{ "this rule" if result.failures|length == 1 else "these rules" }} — every
+    rule must pass:
+    <ul class="faucet-fails">
+      {% for f in result.failures %}
+      <li>
+        <strong>{{ f.label }}:</strong> {{ f.reason }}
+        {% if f.retry_in %}
+          <em>You can try again in {{ f.retry_in }} (at {{ f.retry_at }}).</em>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
   </div>
   {% endif %}
 {% endif %}
@@ -133,6 +168,41 @@
       <p class="cache-note">
         This is the confirmed on-chain balance of the {{ net_title }} Lightning
         node the faucet dispenses from.
+      </p>
+    </div>
+
+    <div class="faucet-limits">
+      <h4>Request limits</h4>
+      {% if limits.max_request %}
+      <p>
+        Most you can request now:
+        <span class="big">{{ limits.max_request.btc }}</span> BTC
+        <span class="cache-note">({{ limits.max_request.sats }} sats)</span>
+      </p>
+      {% endif %}
+      <ul>
+        {% if limits.one_per_day %}
+        <li>One successful withdrawal per 24 hours (per IP address).</li>
+        {% endif %}
+        {% if limits.daily_cap %}
+        <li>Daily maximum: <strong>{{ limits.daily_cap.btc }}</strong> BTC
+            ({{ limits.daily_cap.sats }} sats).</li>
+        {% elif limits.balance_known == false %}
+        <li>Daily maximum: <span class="pending">unavailable…</span></li>
+        {% endif %}
+        {% if limits.balance_cap %}
+        <li>Per request: at most {{ limits.balance_cap_pct }}% of the balance =
+            <strong>{{ limits.balance_cap.btc }}</strong> BTC
+            ({{ limits.balance_cap.sats }} sats).</li>
+        {% endif %}
+        {% if limits.min_claim %}
+        <li>Minimum request: <strong>{{ limits.min_claim.btc }}</strong> BTC
+            ({{ limits.min_claim.sats }} sats).</li>
+        {% endif %}
+      </ul>
+      <p class="cache-note">
+        Every limit must be met — a request is dispensed only when it satisfies
+        all of them.
       </p>
     </div>
   </div>

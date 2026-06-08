@@ -117,6 +117,28 @@ def read_onion_hostname(secrets_root: Path) -> str | None:
     return OnionKey(bytes.fromhex(seed_path.read_text().strip())).hostname
 
 
+def load_or_create_faucet_salt(secrets_root: Path) -> str:
+    """Return the install-wide faucet IP-hashing salt, creating it once.
+
+    Like the onion identity, this is install-wide: the faucet keys its per-IP
+    rows by network, but a single salt across the install is sufficient. Persisted
+    under ``secrets/faucet/`` so the salt — and therefore the stored IP hashes —
+    stay stable across regenerations. Rotating it would silently reset everyone's
+    per-IP daily limit, so it is created once and then left alone.
+    """
+    faucet_dir = secrets_root / "faucet"
+    salt_path = faucet_dir / "ip_salt.hex"
+
+    if salt_path.is_file():
+        return salt_path.read_text().strip()
+
+    salt = _secrets.token_hex(32)
+    faucet_dir.mkdir(parents=True, exist_ok=True)
+    salt_path.write_text(salt + "\n")
+    salt_path.chmod(0o600)
+    return salt
+
+
 def load_or_create_onion_key(secrets_root: Path) -> OnionKey:
     """Return the installation's single Tor v3 onion key, creating it once.
 
