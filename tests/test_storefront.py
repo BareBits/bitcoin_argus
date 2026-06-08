@@ -201,6 +201,11 @@ def test_build_contexts_and_provision_files(tmp_path):
     assert "woocommerce_enable_guest_checkout yes" in prov
     assert "users_can_register 0" in prov
     assert "btcpay-greenfield-for-woocommerce" in prov
+    # Frictionless checkout: classic shortcode pages (so fields are removable) and
+    # no login-at-checkout prompt.
+    assert "[woocommerce_checkout]" in prov
+    assert "[woocommerce_cart]" in prov
+    assert "woocommerce_enable_checkout_login_reminder no" in prov
     # Storefront launch + default-content cleanup + front page -> shop.
     assert "woocommerce_coming_soon no" in prov
     assert "page_on_front" in prov
@@ -212,6 +217,12 @@ def test_build_contexts_and_provision_files(tmp_path):
     assert "option_users_can_register" in hardening  # registration locked off
     assert "woocommerce_product_tabs" in hardening    # reviews tab removed
     assert "comments_open" in hardening               # comments off
+    # Checkout asks for no information: all field groups stripped, order notes off,
+    # a placeholder email injected, and the empty fields column hidden.
+    assert "woocommerce_checkout_fields" in hardening
+    assert "woocommerce_enable_order_notes_field" in hardening
+    assert "woocommerce_checkout_posted_data" in hardening
+    assert "#customer_details" in hardening
     # Seed wires auto-withdraw + derives an on-chain xpub from bitcoind.
     assert "auto_melt_address" in seed
     assert "derive_core_xpub" in seed
