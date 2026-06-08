@@ -290,3 +290,10 @@ details[open] > summary > .caret { transform: rotate(90deg); }
   box-shadow: 0 0 12px rgba(60, 110, 255, 0.4);
 }
 .reset-help:hover .reset-pop, .reset-help:focus .reset-pop { display: block; }
+
+/* Site nav (dashboard / graphs) + compact network cell — resource-history feature. */
+.site-nav { display: inline-flex; gap: 0.8rem; margin-left: 1.2rem; align-items: center; }
+.site-nav a { color: var(--accent); text-transform: uppercase; font-size: 0.74rem; letter-spacing: 1px; }
+.site-nav a:hover { text-decoration: underline; }
+.net-cell { white-space: nowrap; font-size: 0.82rem; }
+.net-sep { opacity: 0.5; }

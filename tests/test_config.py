@@ -19,6 +19,39 @@ def test_unknown_field_rejected():
         validated(make({"regtest": {"enabled": True, "mempoool": {}}}))
 
 
+def _with_web(metrics_history: dict) -> dict:
+    data = make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}})
+    data["web"] = {"metrics_history": metrics_history}
+    return data
+
+
+def test_metrics_history_defaults():
+    cfg = validated(make({"regtest": {"enabled": True, "bitcart": BITCART_OFF}}))
+    mh = cfg.web.metrics_history
+    assert mh.enabled is True
+    assert (mh.raw_retention_hours, mh.hourly_retention_days,
+            mh.daily_retention_days) == (24, 3, 365)
+
+
+def test_metrics_history_sample_interval_bounds():
+    with pytest.raises(Exception, match="sample_interval_seconds"):
+        validated(_with_web({"sample_interval_seconds": 2}))
+    with pytest.raises(Exception, match="sample_interval_seconds"):
+        validated(_with_web({"sample_interval_seconds": 99999}))
+
+
+def test_metrics_history_disk_cadence_must_not_be_finer_than_sample():
+    with pytest.raises(Exception, match="disk_sample_interval_seconds"):
+        validated(_with_web(
+            {"sample_interval_seconds": 60, "disk_sample_interval_seconds": 30}
+        ))
+
+
+def test_metrics_history_retention_positive():
+    with pytest.raises(Exception, match="retention"):
+        validated(_with_web({"daily_retention_days": 0}))
+
+
 def test_unknown_network_rejected():
     with pytest.raises(ConfigError, match="unknown network"):
         validated(make({"mainnet": {"enabled": True}}))

@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Resource graphs · Bitcoin Argus{% endblock %}
+
+{% block head_extra %}
+<style>
+  .stats-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+    margin: 1rem 0; }
+  .stats-controls .group { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+  .stats-controls label { opacity: 0.8; margin-right: 0.3rem; text-transform: uppercase;
+    font-size: 0.72rem; letter-spacing: 1px; }
+  .range-btn, #scope-select { background: var(--panel-top, #111); color: var(--fg, #ccc);
+    border: 1px solid var(--line, #444); border-radius: 3px; padding: 0.25rem 0.6rem;
+    cursor: pointer; font: inherit; }
+  .range-btn.active { background: var(--accent, #36f); color: var(--bg, #000);
+    border-color: var(--accent, #36f); font-weight: bold; }
+  .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem; }
+  .chart-card { border: 1px solid var(--line, #444); border-radius: 4px;
+    background: linear-gradient(180deg, var(--panel-top, #0a0a0a), var(--panel-bottom, #050505));
+    padding: 0.6rem 0.6rem 0.4rem; }
+  .chart-card h3 { margin: 0 0 0.2rem; font-size: 0.9rem; }
+  .chart-card .sub { opacity: 0.65; font-size: 0.72rem; margin-bottom: 0.4rem; }
+  .chart-card canvas { width: 100%; height: 230px; display: block; }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; margin-top: 0.4rem;
+    font-size: 0.74rem; }
+  .chart-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+  .chart-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  #stats-status { opacity: 0.7; font-size: 0.8rem; margin-left: auto; }
+  .stats-note { opacity: 0.7; font-size: 0.8rem; margin-top: 1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Resource graphs</h1>
+
+{% if not history_enabled %}
+<div class="chart-card" style="max-width: 640px">
+  <p>Time-series history collection is <strong>disabled</strong> for this
+  installation (<code>web.metrics_history.enabled = false</code>). The live
+  per-service usage table is still on the <a href="/">dashboard</a>.</p>
+</div>
+{% else %}
+<p class="tagline">Per-service CPU, memory, disk, and network over time. Recent
+detail is sampled finely; older data is rolled up to hourly then daily.</p>
+
+<div class="stats-controls">
+  <div class="group">
+    <label>Range</label>
+    {% for r in ranges %}
+    <button class="range-btn{% if r == default_range %} active{% endif %}"
+            data-range="{{ r }}">{{ r }}</button>
+    {% endfor %}
+  </div>
+  <div class="group">
+    <label for="scope-select">Scope</label>
+    <select id="scope-select">
+      <option value="__all__">All networks (per network)</option>
+      {% for key, title in net_titles.items() %}
+      <option value="{{ key }}">{{ title }}</option>
+      {% endfor %}
+      <option value="{{ host_key }}">Whole host</option>
+    </select>
+  </div>
+  <div class="group">
+    <button id="total-toggle" class="range-btn" aria-pressed="false"
+            title="Combine the lines in view into a single total per graph">Σ Total</button>
+  </div>
+  <span id="stats-status">loading…</span>
+</div>
+
+<div class="charts-grid" id="charts"></div>
+
+<p class="stats-note">Network “total bandwidth” is the cumulative bytes moved
+within the selected range (bounded by how long history has been retained), not
+since install. Host-networked services (the shared web proxy) report their
+traffic under <em>Whole host</em>, not per service.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+{% if history_enabled %}
+<script src="{{ url_for('static', filename='charts.js') }}"></script>
+<script>
+(function () {
+  "use strict";
+  var HOST_KEY = {{ host_key|tojson }};
+  var NET_TITLES = {{ net_titles|tojson }};
+  var DEFAULT_RANGE = {{ default_range|tojson }};
+
+  var state = { range: DEFAULT_RANGE, scope: "__all__", total: false, payload: null };
+  var charts = {};
+
+  var PALETTE = ["#6ea0ff", "#49e0a0", "#ffb454", "#ff5470", "#b48cff",
+    "#4dd0e1", "#f06292", "#aed581", "#fff176", "#90a4ae", "#ff8a65", "#9ccc65"];
+  function colorFor(label) {
+    var h = 0;
+    for (var i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+    return PALETTE[h % PALETTE.length];
+  }
+
+  function fmtBytes(v) {
+    var u = ["B", "KB", "MB", "GB", "TB", "PB"], i = 0, n = Math.abs(v);
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? Math.round(n) : n.toFixed(1)) + " " + u[i];
+  }
+  function fmtRate(v) { return fmtBytes(v) + "/s"; }
+  function fmtCores(v) { return v.toFixed(2); }
+  function fmtTime(t) {
+    var d = new Date(t * 1000);
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    if (state.range === "30d" || state.range === "365d")
+      return p(d.getMonth() + 1) + "/" + p(d.getDate());
+    if (state.range === "3d")
+      return p(d.getMonth() + 1) + "/" + p(d.getDate()) + " " + p(d.getHours()) + "h";
+    return p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  // CHARTS: each pulls a metric out of a per-(net,bucket) entry.
+  var DEFS = [
+    { key: "cpu", title: "CPU", sub: "cores in use", yFormat: fmtCores,
+      point: function (e, i) { return e.cpu[i]; } },
+    { key: "ram", title: "Memory", sub: "working set", yFormat: fmtBytes,
+      point: function (e, i) { return e.ram[i]; } },
+    { key: "disk", title: "Disk", sub: "volumes + writable layer", yFormat: fmtBytes,
+      point: function (e, i) { return e.disk[i]; } },
+    { key: "rx", title: "Download speed", sub: "received, avg over interval",
+      yFormat: fmtRate, point: function (e, i) { return e.rx[i] / Math.max(1, e.dt[i]); } },
+    { key: "tx", title: "Upload speed", sub: "sent, avg over interval",
+      yFormat: fmtRate, point: function (e, i) { return e.tx[i] / Math.max(1, e.dt[i]); } },
+    { key: "bw", title: "Total bandwidth", sub: "cumulative ↓+↑ over range",
+      yFormat: fmtBytes, cumulative: true,
+      point: function (e, i) { return (e.rx[i] || 0) + (e.tx[i] || 0); } },
+  ];
+
+  function buildCards() {
+    var grid = document.getElementById("charts");
+    grid.innerHTML = "";
+    DEFS.forEach(function (def) {
+      var card = document.createElement("div");
+      card.className = "chart-card";
+      card.innerHTML = "<h3>" + def.title + "</h3><div class='sub'>" + def.sub +
+        "</div><canvas></canvas><div class='chart-legend'></div>";
+      grid.appendChild(card);
+      charts[def.key] = {
+        def: def,
+        chart: new LineChart(card.querySelector("canvas"),
+          { yFormat: def.yFormat, xFormat: fmtTime }),
+        legend: card.querySelector(".chart-legend"),
+      };
+    });
+  }
+
+  // Merge a list of per-(net,bucket) entries into one [t,v] line for a metric,
+  // summing values that share a timestamp. Disk nulls are skipped; cumulative
+  // metrics are running-summed after the merge.
+  function lineFor(entries, def) {
+    var byTs = {};
+    entries.forEach(function (e) {
+      for (var i = 0; i < e.ts.length; i++) {
+        var v = def.point(e, i);
+        if (v === null || v === undefined || isNaN(v)) continue;
+        byTs[e.ts[i]] = (byTs[e.ts[i]] || 0) + v;
+      }
+    });
+    var pts = Object.keys(byTs).map(function (t) { return [parseInt(t, 10), byTs[t]]; });
+    pts.sort(function (a, b) { return a[0] - b[0]; });
+    if (def.cumulative) {
+      var run = 0;
+      pts = pts.map(function (p) { run += p[1]; return [p[0], run]; });
+    }
+    return pts;
+  }
+
+  // Group payload into named series for the current scope.
+  function seriesGroups() {
+    var s = state.payload.series || {};
+    var groups = []; // {label, entries:[entry]}
+    if (state.scope === HOST_KEY) {
+      var h = (s[HOST_KEY] || {})[HOST_KEY];
+      if (h) groups.push({ label: "host", entries: [h] });
+    } else if (state.scope === "__all__") {
+      Object.keys(s).forEach(function (net) {
+        if (net === HOST_KEY) return;
+        var entries = Object.keys(s[net]).map(function (b) { return s[net][b]; });
+        groups.push({ label: NET_TITLES[net] || net, entries: entries });
+      });
+    } else {
+      var net = s[state.scope] || {};
+      Object.keys(net).forEach(function (b) {
+        groups.push({ label: b, entries: [net[b]] });
+      });
+    }
+    // "Total" mode: collapse every line in view into one summed series. lineFor()
+    // already sums all entries it is handed (and running-sums cumulative metrics),
+    // so one group holding every entry yields the per-graph total.
+    if (state.total && groups.length) {
+      var all = [];
+      groups.forEach(function (g) { all = all.concat(g.entries); });
+      var label = state.scope === "__all__" ? "all networks"
+        : state.scope === HOST_KEY ? "host"
+        : (NET_TITLES[state.scope] || state.scope);
+      groups = [{ label: label + " — total", entries: all }];
+    }
+    return groups;
+  }
+
+  function draw() {
+    if (!state.payload) return;
+    var groups = seriesGroups();
+    DEFS.forEach(function (def) {
+      var c = charts[def.key];
+      var series = groups.map(function (g) {
+        return { label: g.label, color: colorFor(g.label), data: lineFor(g.entries, def) };
+      }).filter(function (s) { return s.data.length; });
+      c.chart.setData(series);
+      c.legend.innerHTML = series.map(function (s) {
+        return "<span><i style='background:" + s.color + "'></i>" + s.label + "</span>";
+      }).join("");
+    });
+  }
+
+  function load() {
+    var status = document.getElementById("stats-status");
+    status.textContent = "loading…";
+    fetch("/api/metrics/history?range=" + encodeURIComponent(state.range))
+      .then(function (r) { return r.json(); })
+      .then(function (p) {
+        state.payload = p;
+        var n = Object.keys(p.series || {}).length;
+        status.textContent = p.error ? ("error: " + p.error)
+          : (n ? ("tier: " + p.tier) : "no data yet — sampler may be warming up");
+        draw();
+      })
+      .catch(function (e) { status.textContent = "error: " + e; });
+  }
+
+  // Only the range buttons carry data-range; the Total toggle shares the
+  // .range-btn look but must NOT be wired as a range button (else clicking it
+  // would reload with range=undefined and blank the charts).
+  document.querySelectorAll(".range-btn[data-range]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".range-btn[data-range]").forEach(function (b) {
+        b.classList.remove("active");
+      });
+      btn.classList.add("active");
+      state.range = btn.dataset.range;
+      load();
+    });
+  });
+  document.getElementById("scope-select").addEventListener("change", function (e) {
+    state.scope = e.target.value;
+    draw();
+  });
+  var totalBtn = document.getElementById("total-toggle");
+  totalBtn.addEventListener("click", function () {
+    state.total = !state.total;
+    totalBtn.classList.toggle("active", state.total);
+    totalBtn.setAttribute("aria-pressed", state.total ? "true" : "false");
+    draw();
+  });
+
+  buildCards();
+  load();
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -226,3 +226,10 @@ details[open] > summary > .caret { transform: rotate(90deg); }
   text-transform: uppercase; font-size: 0.8rem;
 }
 .net-tab-radio:checked + .net-tab { box-shadow: 1px 1px 0 var(--ink); }
+
+/* Site nav (dashboard / graphs) + compact network cell — resource-history feature. */
+.site-nav { display: inline-flex; gap: 0.8rem; margin-left: 1.2rem; align-items: center; }
+.site-nav a { color: var(--accent); text-transform: uppercase; font-size: 0.74rem; letter-spacing: 1px; }
+.site-nav a:hover { text-decoration: underline; }
+.net-cell { white-space: nowrap; font-size: 0.82rem; }
+.net-sep { opacity: 0.5; }

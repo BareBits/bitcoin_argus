@@ -277,7 +277,7 @@
     <table class="svc-table">
       <thead>
         <tr>
-          <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>RAM</th><th>Disk</th><th>Version</th>
+          <th>Service</th><th>Who</th><th>Access</th><th>Ports</th><th>CPU</th><th>RAM</th><th>Disk</th><th title="Network received ↓ / sent ↑ since each container last started">Net&nbsp;↓/↑</th><th>Version</th>
         </tr>
       </thead>
       <tbody>
@@ -298,8 +298,10 @@
                     title="{{ 'reachable by visitors' if p.public else 'operator only (server localhost)' }}">{{ p.label }}:{{ p.port }}</span>{% if not loop.last %} {% endif %}
             {% endfor %}
           </td>
+          <td class="num">{{ svc.cpu|humancores }}</td>
           <td class="num">{{ svc.ram|humanbytes }}</td>
           <td class="num">{{ svc.disk|humanbytes }}</td>
+          <td class="num net-cell">{{ svc.net_rx|humanbytes }}<span class="net-sep"> / </span>{{ svc.net_tx|humanbytes }}</td>
           <td class="svc-version">
             {% if svc.version %}<a href="{{ svc.repo_url }}" target="_blank" rel="noopener">{{ svc.version }}</a>{% else %}—{% endif %}
           </td>
@@ -326,8 +328,10 @@
         {% endfor %}
         <tr class="totals">
           <td colspan="4">Section total</td>
+          <td class="num">{{ s.cpu_total|humancores }}</td>
           <td class="num">{{ s.ram_total|humanbytes }}</td>
           <td class="num">{{ s.disk_total|humanbytes }}</td>
+          <td class="num net-cell">{{ s.net_rx_total|humanbytes }}<span class="net-sep"> / </span>{{ s.net_tx_total|humanbytes }}</td>
           <td></td>
         </tr>
       </tbody>
@@ -449,6 +453,9 @@
   <p class="cache-note">
     Resource figures are cached and refresh at most once per hour
     {% if cache_age is not none %}(updated {{ cache_age }}s ago){% endif %}.
+    {% if metrics_history_enabled %}
+    See <a href="/stats">resource graphs over time →</a>
+    {% endif %}
   </p>
   {% if metrics_errors %}
   <details class="metrics-errors">

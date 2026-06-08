@@ -124,19 +124,35 @@ def classify(name: str) -> tuple[str | None, str | None]:
 
 @dataclass
 class Usage:
-    """Aggregated usage for one ``(network, bucket)`` pair, in bytes."""
+    """Aggregated live usage for one ``(network, bucket)`` pair.
+
+    ``ram``/``disk``/``net_rx``/``net_tx`` are bytes; ``cpu`` is *cores used*
+    (e.g. ``1.5`` == one and a half cores busy). ``net_rx``/``net_tx`` are the
+    containers' cumulative counters since they last started — a point-in-time
+    figure for the live table; the time-series history derives speed and totals
+    from per-interval deltas instead (see :mod:`argus.web.history`).
+    """
 
     ram: int = 0
+    cpu: float = 0.0
     disk: int = 0
+    net_rx: int = 0
+    net_tx: int = 0
 
-    def as_dict(self) -> dict[str, int]:
-        return {"ram": self.ram, "disk": self.disk}
+    def as_dict(self) -> dict[str, float | int]:
+        return {
+            "ram": self.ram,
+            "cpu": self.cpu,
+            "disk": self.disk,
+            "net_rx": self.net_rx,
+            "net_tx": self.net_tx,
+        }
 
 
 @dataclass
 class MetricsResult:
-    # usage[net_key][bucket] -> {"ram": int, "disk": int}
-    usage: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
+    # usage[net_key][bucket] -> {"ram", "cpu", "disk", "net_rx", "net_tx"}
+    usage: dict[str, dict[str, dict[str, float | int]]] = field(default_factory=dict)
     host: dict[str, int | None] = field(default_factory=dict)
     # lnd[net_key] / lnd2[net_key] / lnd3[net_key] -> identity pubkey (hex).
     lnd: dict[str, str] = field(default_factory=dict)
@@ -280,6 +296,67 @@ def _container_memory_bytes(stats: dict) -> int:
     return max(usage - cache, 0)
 
 
+def _container_cpu_cores(stats: dict) -> float:
+    """CPU usage as *cores busy* over the sample window the daemon measured.
+
+    ``stats(stream=False)`` returns one reading that already carries the previous
+    sample in ``precpu_stats``, so the busy fraction is computable from a single
+    call: ``cpu_delta / system_delta`` is the share of all cores used, and
+    multiplying by the online-CPU count expresses it as cores (1.0 == one full
+    core). Returns 0.0 if the payload is incomplete (e.g. the very first read of a
+    just-started container, where ``precpu_stats`` is empty)."""
+    cpu = stats.get("cpu_stats") or {}
+    pre = stats.get("precpu_stats") or {}
+    cur = (cpu.get("cpu_usage") or {}).get("total_usage")
+    prev = (pre.get("cpu_usage") or {}).get("total_usage")
+    sys_cur = cpu.get("system_cpu_usage")
+    sys_prev = pre.get("system_cpu_usage")
+    if None in (cur, prev, sys_cur, sys_prev):
+        return 0.0
+    cpu_delta = cur - prev
+    sys_delta = sys_cur - sys_prev
+    if sys_delta <= 0 or cpu_delta < 0:
+        return 0.0
+    online = (
+        cpu.get("online_cpus")
+        or len((cpu.get("cpu_usage") or {}).get("percpu_usage") or [])
+        or 1
+    )
+    return (cpu_delta / sys_delta) * online
+
+
+def _container_net_bytes(stats: dict) -> tuple[int, int, bool]:
+    """Cumulative ``(rx_bytes, tx_bytes, has_net)`` summed over the container's
+    interfaces. ``has_net`` is False when the payload carries no ``networks`` key
+    — true for ``network_mode: host`` containers (e.g. the shared Caddy), whose
+    traffic shows on the host's interfaces, not a per-container veth — so the
+    caller can record per-container net as n/a rather than a misleading zero."""
+    nets = stats.get("networks")
+    if not nets:
+        return 0, 0, False
+    rx = sum((v or {}).get("rx_bytes", 0) or 0 for v in nets.values())
+    tx = sum((v or {}).get("tx_bytes", 0) or 0 for v in nets.values())
+    return int(rx), int(tx), True
+
+
+@dataclass
+class ContainerSample:
+    """One container's raw, point-in-time sample (before bucket aggregation).
+
+    ``rx``/``tx`` are the container's *cumulative* byte counters (reset to 0 when
+    the container restarts); the history sampler turns successive readings into
+    per-interval deltas. ``has_net`` is False for host-networked containers."""
+
+    name: str
+    net: str
+    bucket: str
+    ram: int = 0
+    cpu: float = 0.0
+    rx: int = 0
+    tx: int = 0
+    has_net: bool = False
+
+
 # Per-container ``stats(stream=False)`` is a ~1-2s round-trip to the docker daemon
 # (it samples a CPU/mem window), so collecting them serially scales linearly with
 # the container count — a multi-network install (dozens of containers) blows past
@@ -289,12 +366,14 @@ def _container_memory_bytes(stats: dict) -> int:
 _STATS_MAX_WORKERS = 16
 
 
-def _container_ram_samples(client, containers) -> list[tuple[str, str, int]]:
-    """Working-set RAM per *attributable* container, fetched in parallel.
+def per_container_samples(client, containers) -> list[ContainerSample]:
+    """One :class:`ContainerSample` per *attributable* running container, fetched
+    in parallel.
 
-    Returns ``(net_key, bucket, ram_bytes)`` for each container that classifies to
-    one of ours; containers that aren't ours, or whose ``stats`` call fails, are
-    skipped. Order is irrelevant (the caller sums into buckets)."""
+    Each carries working-set RAM, CPU (cores), and cumulative net counters drawn
+    from a single ``stats`` call. Containers that aren't ours, or whose ``stats``
+    call fails, are skipped. Used by both the live collector (which aggregates
+    these into buckets) and the history sampler (which diffs the net counters)."""
     matched = []
     for c in containers:
         net, bucket = classify(c.name)
@@ -303,13 +382,23 @@ def _container_ram_samples(client, containers) -> list[tuple[str, str, int]]:
     if not matched:
         return []
 
-    def _sample(item: tuple) -> tuple[str, str, int] | None:
+    def _sample(item: tuple) -> ContainerSample | None:
         c, net, bucket = item
         try:
             stats = c.stats(stream=False)
         except Exception:
             return None
-        return net, bucket, _container_memory_bytes(stats)
+        rx, tx, has_net = _container_net_bytes(stats)
+        return ContainerSample(
+            name=c.name,
+            net=net,
+            bucket=bucket,
+            ram=_container_memory_bytes(stats),
+            cpu=_container_cpu_cores(stats),
+            rx=rx,
+            tx=tx,
+            has_net=has_net,
+        )
 
     workers = min(_STATS_MAX_WORKERS, len(matched))
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -386,13 +475,19 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         errors.append(f"docker connect: {exc}")
 
     if client is not None:
-        # RAM: one-shot stats per running container, fetched in parallel (the calls
-        # are independent and individually slow — see _container_ram_samples).
+        # RAM/CPU/net: one-shot stats per running container, fetched in parallel
+        # (the calls are independent and individually slow — see
+        # per_container_samples). CPU is cores-used; net is the cumulative
+        # since-start counter (host-networked containers report no per-container
+        # net, so those are left at zero rather than guessed).
         try:
-            for net, bucket, ram in _container_ram_samples(
-                client, client.containers.list()
-            ):
-                _add(usage, net, bucket).ram += ram
+            for s in per_container_samples(client, client.containers.list()):
+                u = _add(usage, s.net, s.bucket)
+                u.ram += s.ram
+                u.cpu += s.cpu
+                if s.has_net:
+                    u.net_rx += s.rx
+                    u.net_tx += s.tx
         except Exception as exc:
             errors.append(f"container stats: {exc}")
 
