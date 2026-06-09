@@ -89,8 +89,18 @@ function sha256d(bytes) {
 
 async function loadYespower(wasmUrl) {
   const resp = await fetch(wasmUrl);
+  // The emscripten-built module imports three WASI stdio functions on its
+  // abort/stderr paths (never reached by hashing). No-op stubs satisfy them so
+  // the module instantiates without a WASI host.
+  const imports = {
+    wasi_snapshot_preview1: {
+      fd_close: function () { return 0; },
+      fd_write: function () { return 0; },
+      fd_seek: function () { return 0; },
+    },
+  };
   const { instance } = await WebAssembly.instantiate(
-    await resp.arrayBuffer(), {}
+    await resp.arrayBuffer(), imports
   );
   const ex = instance.exports;
   const memory = ex.memory;

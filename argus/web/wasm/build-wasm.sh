@@ -19,7 +19,7 @@ WORK="${WORK:-/tmp/yespower-build}"
 # deploy time — see the feature's deploy/verify step.)
 YESPOWER_VERSION="1.0.1"
 YESPOWER_URL="https://www.openwall.com/yespower/yespower-${YESPOWER_VERSION}.tar.gz"
-YESPOWER_SHA256="${YESPOWER_SHA256:-PLACEHOLDER_CONFIRM_AT_DEPLOY}"
+YESPOWER_SHA256="${YESPOWER_SHA256:-0e1eb612e3fa23a0b19aa5bbe944000b501b17d8bbb38cfa383a1f4376ead029}"
 
 mkdir -p "$WORK" "$OUT_DIR"
 cd "$WORK"
@@ -41,14 +41,19 @@ echo "[wasm] compiling to standalone wasm"
 # -mexec-model=reactor + --no-entry: a library module (no _start), so the host
 #   just calls the exported functions.
 # STANDALONE_WASM + ALLOW_MEMORY_GROWTH: malloc-backed heap, memory exported.
+# --no-entry makes this a "reactor" module (no main): the host just calls the
+# exported functions. A fixed 32 MiB heap (no memory growth) and no filesystem
+# keep the module IMPORT-FREE, so both the browser and the wasmtime verifier can
+# instantiate it with an empty import object. The linear memory is exported as
+# "memory"; yespower's ~2 MiB working set fits comfortably.
 emcc \
   -O3 \
   -I. \
   yespower-opt.c sha256.c "$SRC_DIR/yespower_wasm.c" \
-  -mexec-model=reactor \
   -sSTANDALONE_WASM=1 \
-  -sALLOW_MEMORY_GROWTH=1 \
-  -sINITIAL_MEMORY=16MB \
+  -sALLOW_MEMORY_GROWTH=0 \
+  -sINITIAL_MEMORY=33554432 \
+  -sFILESYSTEM=0 \
   -sEXPORTED_FUNCTIONS=_alloc,_yespower_hash \
   -sERROR_ON_UNDEFINED_SYMBOLS=1 \
   -Wl,--no-entry \

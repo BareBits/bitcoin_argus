@@ -104,7 +104,33 @@ def _load_yespower() -> Callable[[bytes], bytes]:
             engine = wasmtime.Engine()
             module = wasmtime.Module.from_file(engine, _YESPOWER_WASM)
             store_ = wasmtime.Store(engine)
-            instance = wasmtime.Instance(store_, module, [])
+            # The emscripten-built module imports three WASI stdio functions on
+            # its abort/stderr paths (never reached by hashing). Satisfy them with
+            # no-op stubs so the module instantiates with no real WASI host.
+            i32, i64 = wasmtime.ValType.i32, wasmtime.ValType.i64
+            stub_sigs = {
+                "fd_close": ([i32()], [i32()]),
+                "fd_write": ([i32(), i32(), i32(), i32()], [i32()]),
+                "fd_seek": ([i32(), i64(), i32(), i32()], [i32()]),
+            }
+
+            def _make_stub():
+                def stub(*_args):
+                    return 0
+
+                return stub
+
+            imports = []
+            for imp in module.imports:
+                if imp.name not in stub_sigs:
+                    raise PowUnavailable(
+                        f"unexpected wasm import {imp.module}.{imp.name}"
+                    )
+                params, results = stub_sigs[imp.name]
+                ft = wasmtime.FuncType(params, results)
+                imports.append(wasmtime.Func(store_, ft, _make_stub()))
+
+            instance = wasmtime.Instance(store_, module, imports)
             exports = instance.exports(store_)
             memory = exports["memory"]
             alloc = exports["alloc"]
@@ -115,15 +141,14 @@ def _load_yespower() -> Callable[[bytes], bytes]:
                 with lock:
                     in_ptr = alloc(store_, len(data))
                     out_ptr = alloc(store_, _HASH_LEN)
-                    base = memory.data_ptr(store_)
-                    for i, b in enumerate(data):
-                        base[in_ptr + i] = b
+                    memory.write(store_, data, in_ptr)
                     digest(store_, in_ptr, len(data), out_ptr)
-                    base = memory.data_ptr(store_)
-                    return bytes(base[out_ptr + i] for i in range(_HASH_LEN))
+                    return bytes(memory.read(store_, out_ptr, out_ptr + _HASH_LEN))
 
             _yespower_fn = _fn
             return _fn
+        except PowUnavailable:
+            raise
         except Exception as exc:  # pragma: no cover - VPS artefact
             raise PowUnavailable(f"yespower wasm failed to load: {exc}")
 

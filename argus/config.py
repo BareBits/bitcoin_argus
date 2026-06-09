@@ -745,10 +745,11 @@ class PowCfg(_Base):
     demand_max_mult: float = Field(default=16.0, ge=1)
 
     # -- calibration (reference-machine hashrates, H/s) --------------------
-    # Assumed throughput of the PoW primitives on a consumer laptop, used to turn
-    # a "seconds of work" target into a hash target. reference_yespower_hps must
-    # be measured against the CI-built WASM (done at deploy time).
-    reference_yespower_hps: float = Field(default=1500.0, gt=0)
+    # Assumed AGGREGATE throughput of the PoW primitives on a consumer laptop
+    # (all solver workers), used to turn a "seconds of work" target into a hash
+    # target. yespower was measured at ~160 H/s per core under V8 with the
+    # CI-built WASM, so ~800 H/s reflects a ~5-core laptop; tune per deployment.
+    reference_yespower_hps: float = Field(default=800.0, gt=0)
     reference_sha256d_hps: float = Field(default=15_000_000.0, gt=0)
 
     @model_validator(mode="after")
