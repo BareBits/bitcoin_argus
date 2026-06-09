@@ -680,6 +680,87 @@ class ResetCfg(_Base):
     check_interval_seconds: int = Field(default=DEFAULT_RESET_CHECK_INTERVAL, ge=1)
 
 
+class PowCfg(_Base):
+    """Proof-of-work that lets a visitor *earn* faucet claims beyond the one free
+    per-IP-per-day claim (see :mod:`argus.faucet.pow`).
+
+    The browser solves a server-issued, request-bound challenge — find a nonce so
+    that ``H(challenge || nonce) < target`` — and submits the solution; the server
+    re-verifies in one hash. A valid proof overrides the one-claim-per-day limit,
+    so a determined visitor can keep claiming at the cost of (deliberately) more
+    work than minting the coins any other way.
+
+    Difficulty is expressed as a wall-clock **target in seconds on a reference
+    machine**, then converted to a 256-bit hash target via the reference
+    hashrate. Three regimes (see :func:`argus.faucet.pow.compute_target`):
+
+    * **flat** — ``seconds_per_100k`` of work per 100k sats requested (most nets);
+    * **value-pegged** — for real-value testnets (testnet3): pegged to *2x the
+      cheapest cost to actually mine the requested amount* (the testnet3 20-minute
+      difficulty-1 rule), capped at ``value_cap_seconds`` and limited to
+      ``max_per_day`` claims. Needs the network's self-hosted mempool explorer for
+      the current block subsidy; if that is unavailable, PoW is disabled there;
+    * **adaptive factors** — applied on top of the flat base on non-value nets:
+      a balance anchor (harder as the faucet drains) and a demand retarget
+      (harder under spam), each bounded, so ASIC/GPU spammers hit diminishing
+      returns.
+    """
+
+    enabled: bool = True
+    # Hash primitive. ``yespower`` (CPU memory-hard, ASIC/GPU-resistant) is the
+    # production default, run identically in the browser (WASM) and on the server
+    # (via wasmtime). ``sha256d`` is a pure-Python/JS fallback for tests and
+    # low-security setups (NOT ASIC-resistant).
+    algorithm: Literal["yespower", "sha256d"] = "yespower"
+
+    # -- flat base ---------------------------------------------------------
+    # Target wall-clock seconds of PoW per 100k sats requested, on the reference
+    # machine. 10 minutes/100k sats by default.
+    seconds_per_100k: float = Field(default=600.0, gt=0)
+    # Overall clamp on the final per-request target (seconds), after all scaling.
+    min_seconds: float = Field(default=1.0, ge=0)
+    max_seconds: float = Field(default=3600.0, gt=0)
+    # Challenge time-to-live (seconds). The effective TTL is widened to at least
+    # twice the target so a client always has time to finish a hard challenge.
+    ttl_seconds: int = Field(default=1800, ge=30)
+
+    # -- value-pegged (testnet3-style) -------------------------------------
+    # None => auto: True for real-value testnets (testnet3), else False.
+    value_pegged: bool | None = None
+    value_safety_factor: float = Field(default=2.0, gt=0)
+    value_cap_seconds: float = Field(default=1800.0, gt=0)  # ~30 min ceiling
+    # Max PoW-earned claims per IP per UTC day. None => auto: 1 for value-pegged
+    # nets, 0 (unlimited) otherwise.
+    max_per_day: int | None = Field(default=None, ge=0)
+
+    # -- adaptive factors (non-value nets) ---------------------------------
+    balance_anchor: bool = True
+    # At or above this confirmed balance the anchor adds nothing (factor 1.0);
+    # as the balance falls to zero the factor rises linearly to balance_max_mult.
+    balance_full_sat: int = Field(default=100_000_000, ge=1)
+    balance_max_mult: float = Field(default=8.0, ge=1)
+    demand_retarget: bool = True
+    # Today's successful-claim count at which the demand factor reaches its max.
+    demand_target_per_day: int = Field(default=50, ge=1)
+    demand_max_mult: float = Field(default=16.0, ge=1)
+
+    # -- calibration (reference-machine hashrates, H/s) --------------------
+    # Assumed AGGREGATE throughput of the PoW primitives on a consumer laptop
+    # (all solver workers), used to turn a "seconds of work" target into a hash
+    # target. yespower was measured at ~160 H/s per core under V8 with the
+    # CI-built WASM, so ~800 H/s reflects a ~5-core laptop; tune per deployment.
+    reference_yespower_hps: float = Field(default=800.0, gt=0)
+    reference_sha256d_hps: float = Field(default=15_000_000.0, gt=0)
+
+    @model_validator(mode="after")
+    def _check_clamp(self) -> "PowCfg":
+        if self.min_seconds > self.max_seconds:
+            raise ValueError(
+                "faucet.pow.min_seconds must not exceed max_seconds"
+            )
+        return self
+
+
 class FaucetCfg(_Base):
     """Per-network faucet: dispenses on-chain testnet coins from LND node #1.
 
@@ -720,6 +801,9 @@ class FaucetCfg(_Base):
     # Reject dust requests below a floor (anti-spam).
     min_claim_enabled: bool = True
     min_claim_sat: int = Field(default=5000, ge=1)
+
+    # Proof-of-work: earn extra claims beyond the one free per-IP-per-day claim.
+    pow: PowCfg = Field(default_factory=PowCfg)
 
     @field_validator("approval_function")
     @classmethod

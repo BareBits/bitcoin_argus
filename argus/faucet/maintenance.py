@@ -25,8 +25,11 @@ _TICK_SECONDS = 3600
 
 
 def run_maintenance(now: float | None = None) -> tuple[int, int]:
-    """Purge expired IP-claim and usage rows. Idempotent. Returns the counts
-    removed as ``(ip_claims, usage_rows)``."""
+    """Purge expired rows. Idempotent. Returns ``(ip_claims, usage_rows)`` for the
+    two long-window tables; the short-lived PoW tables (spent nonces and per-day
+    PoW-claim counts) are purged too but not counted in the return."""
+    store.purge_redeemed_nonces(now)
+    store.purge_pow_claims(now)
     return store.purge_ip_claims(now), store.purge_usage(now)
 
 

@@ -491,6 +491,37 @@ def test_compute_limits_fresh_faucet(tmp_path):
     assert lim.max_request_sat == min(136_986, 50_000_000)
 
 
+def test_reset_interval_and_horizon():
+    from argus.reset import faucet_cap_horizon_days, reset_interval_seconds
+
+    b = 1024**3
+    # 10%-full 4 MB blocks every 60s => 0.537 GiB/day; a 30 GiB cap ~= 55.9 days.
+    interval = reset_interval_seconds(30 * b, 60)
+    assert round(interval / 86_400, 1) == 55.9
+    # Faster blocks fill the cap sooner (shorter horizon).
+    assert reset_interval_seconds(30 * b, 30) < interval
+    # Resetting nets get the reset-interval horizon (capped at a year)...
+    assert round(faucet_cap_horizon_days(True, 30 * b, 60), 1) == 55.9
+    assert faucet_cap_horizon_days(True, 300 * b, 60) == 365.0  # slow reset => capped
+    # ...non-resetting nets and unknown estimates use the full year.
+    assert faucet_cap_horizon_days(False, 30 * b, 60) == 365.0
+    assert faucet_cap_horizon_days(True, 0, 60) == 365.0  # bad cap => fall back
+
+
+def test_compute_limits_horizon_scales_daily_cap(tmp_path):
+    _fresh_store(tmp_path)
+    cfg = _faucet_cfg()
+    bal = 500_000_000  # 5 BTC, fresh usage => trailing-year expected 3650
+    from argus.faucet import rules
+
+    year = rules.compute_limits(cfg, "regtest", bal, NOW, 365.0).daily_cap_sat
+    short = rules.compute_limits(cfg, "regtest", bal, NOW, 55.9).daily_cap_sat
+    assert year == bal // 3650  # default horizon reproduces the old cap
+    # A ~6.5x shorter horizon => a ~6.5x larger per-claim cap.
+    assert short == int(bal / (3650 * 55.9 / 365.0))
+    assert short > 6 * year
+
+
 def test_compute_limits_balance_unknown(tmp_path):
     _fresh_store(tmp_path)
     cfg = _faucet_cfg()
@@ -639,11 +670,19 @@ def test_one_per_ip_blocks_second_claim(tmp_path, monkeypatch):
 
 
 def test_faucet_page_shows_limits_and_mine_notice(faucet_client):
+    from argus.reset import faucet_cap_horizon_days
+
     body = faucet_client.get("/regtest/faucet").get_data(as_text=True)
-    # Limits panel: the fresh-faucet daily cap in BTC and sats.
+    # Limits panel: the fresh-faucet daily cap, computed over the network's reset
+    # horizon (regtest auto-resets, so the horizon is far shorter than a year and
+    # the cap is correspondingly larger than balance/3650).
+    horizon = faucet_cap_horizon_days(True, 30 * 1024**3, 60)  # ~55.9 days
+    expected = 3650 * horizon / 365.0  # fresh-faucet trailing-year avg projected
+    cap = int(500_000_000 / expected)  # 5 BTC balance
     assert "Request limits" in body
-    assert "0.00136986" in body  # 5 BTC / 3650, in BTC
-    assert "136,986" in body  # …and in sats
+    assert f"{cap / 1e8:.8f}" in body  # daily cap in BTC
+    assert f"{cap:,}" in body  # …and in sats
+    assert cap > 500_000_000 // 3650  # strictly larger than the old year-based cap
     assert "5,000" in body  # minimum claim in sats
     # Regtest is self-mineable, so the notice and its recipe appear.
     assert "Mine your own" in body

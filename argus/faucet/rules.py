@@ -56,7 +56,12 @@ class Limits:
 
 @dataclass(frozen=True)
 class RuleContext:
-    """Everything the rules need to know about one request."""
+    """Everything the rules need to know about one request.
+
+    ``pow_verified`` is set when the request carried a valid proof-of-work, which
+    overrides the one-claim-per-day limit but is itself bounded by the per-day
+    PoW cap (``pow_max_per_day``; 0 = unlimited). ``pow_claims_today`` is how many
+    PoW claims this IP has already made today, for that cap."""
 
     net_key: str
     ip_hash: str | None
@@ -64,19 +69,36 @@ class RuleContext:
     balance_sat: int | None
     now: float
     limits: Limits
+    pow_verified: bool = False
+    pow_claims_today: int = 0
+    pow_max_per_day: int = 0
 
 
-def compute_limits(faucet_cfg, net_key: str, balance_sat: int | None, now: float) -> Limits:
+def compute_limits(
+    faucet_cfg,
+    net_key: str,
+    balance_sat: int | None,
+    now: float,
+    horizon_days: float = 365.0,
+) -> Limits:
     """The amount ceilings currently in effect for ``net_key``.
 
     Used both for display and by the amount-capping rules, so the page and the
     enforcement always agree. Balance-derived caps are ``None`` when the node
     balance can't be read (the rules then fail open).
+
+    The per-day cap divides the balance by the claims expected over
+    ``horizon_days`` — a year by default, but shorter for networks that auto-reset
+    sooner (the faucet only needs its balance to last until the next reset, so
+    each claimant can take a larger share). See
+    :func:`argus.reset.faucet_cap_horizon_days`.
     """
     daily_cap: int | None = None
     if faucet_cfg.max_amount_per_day and balance_sat is not None:
-        expected, _ = store.usage_stats(net_key, now)
-        daily_cap = balance_sat // expected  # expected >= 3650, never zero
+        expected_year, _ = store.usage_stats(net_key, now)  # >= 3650
+        # Project the trailing-year daily average over the planning horizon.
+        expected = max(1.0, expected_year * horizon_days / 365.0)
+        daily_cap = int(balance_sat / expected)
 
     balance_cap: int | None = None
     if faucet_cfg.per_request_balance_cap and balance_sat is not None:
@@ -102,6 +124,8 @@ def _fmt(sats: int) -> str:
 
 
 def _one_per_ip_per_day(cfg, ctx: RuleContext) -> RuleOutcome | None:
+    if ctx.pow_verified:
+        return None  # a valid proof-of-work earns a claim past the daily limit
     if not cfg.one_per_ip_per_day or ctx.ip_hash is None:
         return None  # disabled, or client IP unknown => fail open
     last = store.last_ip_claim(ctx.net_key, ctx.ip_hash)
@@ -152,9 +176,30 @@ def _min_claim(cfg, ctx: RuleContext) -> RuleOutcome | None:
     )
 
 
+def _pow_daily_cap(cfg, ctx: RuleContext) -> RuleOutcome | None:
+    """Cap PoW-earned claims per IP per day (e.g. testnet3 allows one). Only
+    applies to a request that carried a valid proof-of-work."""
+    if not ctx.pow_verified or ctx.pow_max_per_day <= 0:
+        return None
+    if ctx.pow_claims_today < ctx.pow_max_per_day:
+        return None
+    next_day = (int(ctx.now // DAY_SECONDS) + 1) * DAY_SECONDS
+    n = ctx.pow_max_per_day
+    return RuleOutcome(
+        passed=False,
+        label="Daily proof-of-work limit",
+        reason=(
+            f"This network allows {n} proof-of-work "
+            f"claim{'' if n == 1 else 's'} per IP per day."
+        ),
+        retry_after=next_day,
+    )
+
+
 # Order here is the order failures are reported in.
 RULES = (
     _one_per_ip_per_day,
+    _pow_daily_cap,
     _max_amount_per_day,
     _per_request_balance_cap,
     _min_claim,
