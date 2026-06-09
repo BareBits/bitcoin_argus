@@ -26,6 +26,9 @@ from pydantic import (
 from .constants import (
     ARK_RING_NODES,
     ARK_SUPPORTED_CHAINS,
+    CLAIM_NETWORKS,
+    CLAIMER_POLL_INTERVAL_SECONDS,
+    CLAIMER_STATUS_INTERVAL_SECONDS,
     DEFAULT_RESET_CHECK_INTERVAL,
     DEFAULT_RESET_MAX_SIZE_GB,
     FEDIMINT_MAX_GUARDIANS,
@@ -656,6 +659,40 @@ class MinerCfg(_Base):
     initial_blocks: int = Field(default=101, ge=0)  # coinbase maturity on regtest
 
 
+class ClaimerCfg(_Base):
+    """Opportunistic min-difficulty block claimer for the real testnets.
+
+    On testnet3/testnet4 the "20-minute rule" lets the next block be mined at
+    difficulty 1 whenever no block has been found for 20 minutes; the rarer full
+    difficulty reset leaves the chain at ~difficulty 1 for a stretch. This
+    sidecar watches ``getblocktemplate`` and, whenever the next-block target is
+    within reach (difficulty <= ``max_difficulty``), grinds a coinbase-only block
+    to a dedicated ``claimer`` wallet — capturing the subsidy that would
+    otherwise go to whoever else is watching. Off by default (these are real,
+    shared networks). Only valid on the networks in ``constants.CLAIM_NETWORKS``;
+    enabling it elsewhere is a config error (see ``_validate_semantics``).
+
+    Captured coins optionally auto-forward to the network's faucet (LND node #1's
+    on-chain wallet) once matured: ``forward_to_faucet`` is tri-state — None means
+    forward iff the faucet is enabled for this network (resolve with
+    :meth:`NetworkCfg.claimer_forwards`, never read the field directly). When the
+    faucet is off, coins simply accumulate in the ``claimer`` wallet.
+    """
+
+    enabled: bool = False
+    # Mine only when the next-block difficulty is at or below this. 1.0 = the
+    # testnet minimum (difficulty-1 windows + full resets); raise it to also grab
+    # slightly harder blocks at the cost of more CPU per block.
+    max_difficulty: float = Field(default=1.0, gt=0)
+    poll_interval_seconds: int = Field(default=CLAIMER_POLL_INTERVAL_SECONDS, ge=1)
+    status_interval_seconds: int = Field(default=CLAIMER_STATUS_INTERVAL_SECONDS, ge=1)
+    # None => forward iff the faucet is enabled for this network.
+    forward_to_faucet: bool | None = None
+    # Only forward once the matured (spendable) balance reaches this, to avoid
+    # dust-spamming the faucet wallet with tiny sends.
+    forward_threshold_btc: float = Field(default=0.001, gt=0)
+
+
 class ResetCfg(_Base):
     """Auto-reset a mined network when its chain outgrows a size cap.
 
@@ -838,6 +875,7 @@ class NetworkCfg(_Base):
     indexers: list[IndexerCfg] = Field(default_factory=lambda: [IndexerCfg()])
     mempool: MempoolCfg = Field(default_factory=MempoolCfg)
     miner: MinerCfg = Field(default_factory=MinerCfg)
+    claimer: ClaimerCfg = Field(default_factory=ClaimerCfg)
     reset: ResetCfg = Field(default_factory=ResetCfg)
     faucet: FaucetCfg = Field(default_factory=FaucetCfg)
     resources: ResourcesCfg = Field(default_factory=ResourcesCfg)
@@ -945,6 +983,14 @@ class NetworkCfg(_Base):
         if v is not None:
             return v
         return "auto" if (spec.supports_miner and self.miner.enabled) else "external"
+
+    def claimer_forwards(self) -> bool:
+        """Whether the claimer auto-forwards captured coins to the faucet wallet.
+
+        Tri-state ``claimer.forward_to_faucet``: None => forward iff the faucet is
+        enabled for this network. An explicit value always wins."""
+        v = self.claimer.forward_to_faucet
+        return self.faucet.enabled if v is None else v
 
     def lnd_rebalancer_enabled(self, spec: NetworkSpec) -> bool:
         """Whether the periodic circular-rebalancer sidecar runs.
@@ -1302,6 +1348,17 @@ class ArgusConfig(_Base):
             if net.miner.enabled and spec.supports_miner and key not in _MINEABLE_NETWORKS:
                 errors.append(
                     f"[{key}] automated mining is not implemented for this network"
+                )
+
+            # The min-difficulty claimer only makes sense on the real, un-mined
+            # testnets (testnet3/testnet4) that actually have the 20-minute rule.
+            # On every other chain Argus either drives the blocks itself (regtest/
+            # custom signet) or the rule doesn't apply, so enabling it is an error
+            # rather than a silent no-op.
+            if net.claimer.enabled and key not in CLAIM_NETWORKS:
+                errors.append(
+                    f"[{key}] claimer (min-difficulty block claiming) is only "
+                    f"available on {sorted(CLAIM_NETWORKS)}"
                 )
 
             # The liquidity ring needs all three LND nodes; it can self-fund by

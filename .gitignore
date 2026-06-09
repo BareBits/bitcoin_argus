@@ -10,8 +10,12 @@ dist/
 generated/
 secrets/
 
-# Local Claude Code settings (machine-specific permissions)
+# Local Claude Code settings (machine-specific permissions) + runtime state
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Local deployment config (host-specific; the tracked config.yaml is the template)
+deploy-config.yaml
 
 # Local environment / secrets — tokens etc. (NEVER commit)
 .env

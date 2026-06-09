@@ -312,6 +312,34 @@ RESET_CONTROLLER_CONTAINER = "argus-reset-controller"
 RESET_STATE_FILE = "/state/reset_state.json"
 
 
+# --- Min-difficulty claimer (testnet3 / testnet4) ---------------------------
+
+# The public testnets apply the "20-minute rule": if no block is found for
+# 2x the target spacing, the next block may be mined at the minimum difficulty
+# (difficulty 1). The claimer sidecar watches for those windows (and the rarer
+# full difficulty resets) and grinds a coinbase-only block to capture the
+# subsidy. Only meaningful on the real, un-mined testnets — we cannot drive
+# block production on them, only opportunistically grab the easy blocks.
+CLAIM_NETWORKS: frozenset[str] = frozenset({"testnet3", "testnet4"})
+
+# Bitcoin's 20-minute rule threshold = 2x the 10-minute target spacing. Once
+# this many seconds have passed since the tip, getblocktemplate returns the
+# minimum-difficulty target and a coinbase-only block becomes grindable.
+MIN_DIFFICULTY_WINDOW_SECONDS = 1200
+
+# How often the claimer re-checks the template / refreshes its status JSON, and
+# the most blocks it will grind in a single run (so a full reset is captured
+# aggressively without the loop starving the monitor/forward steps).
+CLAIMER_POLL_INTERVAL_SECONDS = 30
+CLAIMER_STATUS_INTERVAL_SECONDS = 30
+CLAIMER_MAX_BLOCKS_PER_RUN = 100
+
+# Where the claimer sidecar writes its status snapshot (difficulty, window
+# state, blocks claimed, balance) — read by the dashboard via the read-only
+# docker-socket-proxy get_archive, exactly like donations/reset state.
+CLAIMER_STATE_FILE = "/state/claimer.json"
+
+
 # Argus chain -> mempool's network slot. The real testnets use their native slot
 # so the explorer labels them correctly and shows mempool's built-in "test coins
 # have no value" warning (the custom signets + mutinynet share chain="signet" and
