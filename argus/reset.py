@@ -36,6 +36,8 @@ import yaml
 from .config import ArgusConfig
 from .constants import (
     CHAIN_INTERNAL_PORTS,
+    FAUCET_CAP_FILL_FRACTION,
+    FAUCET_CAP_MAX_HORIZON_DAYS,
     MAX_BLOCK_BYTES,
     NETWORK_SPECS,
     RESET_CONTROLLER_CONTAINER,
@@ -71,6 +73,42 @@ def seconds_until_reset(
     if rate <= 0:
         return None
     return (limit_bytes - size_on_disk) / rate
+
+
+def reset_interval_seconds(
+    limit_bytes: int,
+    block_interval_seconds: int,
+    fill_fraction: float = FAUCET_CAP_FILL_FRACTION,
+) -> float | None:
+    """Estimated seconds to grow a fresh chain from empty to ``limit_bytes`` (one
+    full reset cycle), assuming each block is ``fill_fraction`` full.
+
+    Unlike :func:`seconds_until_reset` (which assumes full blocks for a
+    conservative "reset imminent?" warning), this models a realistic chain
+    *lifetime* — the horizon the faucet's balance must last. Returns ``None`` when
+    it can't be estimated."""
+    rate = growth_bytes_per_second(block_interval_seconds) * fill_fraction
+    if limit_bytes <= 0 or rate <= 0:
+        return None
+    return limit_bytes / rate
+
+
+def faucet_cap_horizon_days(
+    reset_enabled: bool, limit_bytes: int, block_interval_seconds: int
+) -> float:
+    """Planning horizon (days) for the faucet's per-day amount cap.
+
+    A network that auto-resets on a size cap only needs its faucet balance to
+    last until the next reset, so the horizon is the realistic reset interval
+    (:func:`reset_interval_seconds`) — capped at one year. Networks that never
+    reset (or whose interval exceeds a year, like the long-lived signet) use the
+    full :data:`FAUCET_CAP_MAX_HORIZON_DAYS`."""
+    if not reset_enabled:
+        return FAUCET_CAP_MAX_HORIZON_DAYS
+    interval = reset_interval_seconds(limit_bytes, block_interval_seconds)
+    if interval is None:
+        return FAUCET_CAP_MAX_HORIZON_DAYS
+    return min(FAUCET_CAP_MAX_HORIZON_DAYS, interval / 86_400)
 
 
 def format_reset_eta(seconds: float | None) -> str | None:

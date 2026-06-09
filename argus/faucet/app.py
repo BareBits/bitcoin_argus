@@ -280,6 +280,19 @@ def create_app(
                 "Proof of work is temporarily unavailable. Please try again."
             )
 
+    def _cap_horizon_days(net_key, net, spec) -> float:
+        """Planning horizon (days) for this network's per-day amount cap: shorter
+        for networks that auto-reset sooner, so claimants can take a larger share
+        of a balance that only needs to last until the next reset."""
+        from ..reset import BYTES_PER_GB, faucet_cap_horizon_days
+
+        limit_bytes = int(net.reset_max_size_gb(spec) * BYTES_PER_GB)
+        return faucet_cap_horizon_days(
+            net.reset_enabled(net_key),
+            limit_bytes,
+            net.miner.block_interval_seconds,
+        )
+
     def _free_available(net, net_key, now) -> bool:
         """Whether this visitor's one free (no-PoW) claim is still available today."""
         if not net.faucet.one_per_ip_per_day:
@@ -438,7 +451,10 @@ def create_app(
         # page's limits panel and (on POST) for evaluating the amount-cap rules.
         balance_sat = _balance(net_key, spec.chain)
         now = time.time()
-        limits = rules_mod.compute_limits(net.faucet, net_key, balance_sat, now)
+        limits = rules_mod.compute_limits(
+            net.faucet, net_key, balance_sat, now,
+            _cap_horizon_days(net_key, net, spec),
+        )
 
         result = None
         form_address = ""

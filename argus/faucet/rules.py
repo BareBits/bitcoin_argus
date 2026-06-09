@@ -74,17 +74,31 @@ class RuleContext:
     pow_max_per_day: int = 0
 
 
-def compute_limits(faucet_cfg, net_key: str, balance_sat: int | None, now: float) -> Limits:
+def compute_limits(
+    faucet_cfg,
+    net_key: str,
+    balance_sat: int | None,
+    now: float,
+    horizon_days: float = 365.0,
+) -> Limits:
     """The amount ceilings currently in effect for ``net_key``.
 
     Used both for display and by the amount-capping rules, so the page and the
     enforcement always agree. Balance-derived caps are ``None`` when the node
     balance can't be read (the rules then fail open).
+
+    The per-day cap divides the balance by the claims expected over
+    ``horizon_days`` — a year by default, but shorter for networks that auto-reset
+    sooner (the faucet only needs its balance to last until the next reset, so
+    each claimant can take a larger share). See
+    :func:`argus.reset.faucet_cap_horizon_days`.
     """
     daily_cap: int | None = None
     if faucet_cfg.max_amount_per_day and balance_sat is not None:
-        expected, _ = store.usage_stats(net_key, now)
-        daily_cap = balance_sat // expected  # expected >= 3650, never zero
+        expected_year, _ = store.usage_stats(net_key, now)  # >= 3650
+        # Project the trailing-year daily average over the planning horizon.
+        expected = max(1.0, expected_year * horizon_days / 365.0)
+        daily_cap = int(balance_sat / expected)
 
     balance_cap: int | None = None
     if faucet_cfg.per_request_balance_cap and balance_sat is not None:

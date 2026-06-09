@@ -294,6 +294,17 @@ DEFAULT_RESET_CHECK_INTERVAL = 300
 # is deliberately conservative (fastest plausible growth -> soonest reset).
 MAX_BLOCK_BYTES = 4_000_000
 
+# Realistic block-fill assumption for the FAUCET amount cap's planning horizon
+# (argus.faucet.rules). The dashboard's reset ETA assumes full blocks (soonest
+# reset); the faucet instead wants a realistic chain LIFETIME, so it assumes
+# blocks are this fraction full -> growth is 10x slower -> the reset interval (the
+# horizon over which the faucet balance must last) is 10x longer.
+FAUCET_CAP_FILL_FRACTION = 0.10
+# The faucet amount cap never plans further out than a year, so networks that
+# reset slowly (custom-signet-long) or never (the real testnets) keep the
+# original year-long horizon.
+FAUCET_CAP_MAX_HORIZON_DAYS = 365.0
+
 # The reset controller's container name + where it writes the per-network
 # size/cap JSON the dashboard reads (via the read-only docker-socket-proxy
 # get_archive, like donations/LND info).
