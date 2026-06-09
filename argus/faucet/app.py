@@ -14,11 +14,12 @@ ask LND node #1 to send → record the payout. The four user-facing outcomes are
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from flask import Flask, g, render_template, request, url_for
+from flask import Flask, g, jsonify, render_template, request, url_for
 from jinja2 import ChoiceLoader, FileSystemLoader
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -28,9 +29,11 @@ from ..ports import allocate
 from ..web.app import WARNING_HTML, _human_bytes
 from ..web.content import VARIANTS, faucet_mine_help
 from . import approval as approval_mod
+from . import difficulty as difficulty_mod
 from . import donations as donations_mod
 from . import maintenance as maintenance_mod
 from . import mempool as mempool_mod
+from . import pow as pow_mod
 from . import rules as rules_mod
 from . import store
 from .addresses import is_valid_address
@@ -42,6 +45,10 @@ _ONION_HOSTNAME = os.environ.get("ONION_HOSTNAME") or None
 # Per-install secret used to hash visitor IPs for the per-IP daily limit. Absent
 # in unit tests (the per-IP rule then fails open).
 _IP_SALT = os.environ.get("FAUCET_IP_SALT") or None
+# Secret for signing proof-of-work challenges. Falls back to the IP salt so a
+# standard install (which always has one) gets PoW without a second secret; when
+# neither is set, PoW is disabled (challenges can't be signed).
+_POW_SECRET = os.environ.get("FAUCET_POW_SECRET") or _IP_SALT
 
 _FAUCET_DIR = Path(__file__).resolve().parent
 _WEB_DIR = _FAUCET_DIR.parent / "web"
@@ -209,8 +216,83 @@ def create_app(
         except FaucetLndError:
             return None
 
+    # -- proof-of-work helpers --------------------------------------------
+
+    def _pow_enabled(net, net_key) -> bool:
+        """Whether PoW can be offered for ``net_key``: configured on, a signing
+        secret present, and the chosen hash primitive loadable."""
+        p = net.faucet.pow
+        if not p.enabled or _POW_SECRET is None:
+            return False
+        return pow_mod.algorithm_available(p.algorithm)
+
+    def _pow_target(net, net_key, amount_sat, balance_sat, now) -> dict | None:
+        """The PoW parameters for one request, or None when a value-pegged net has
+        no chain data (PoW is then not offered for that request)."""
+        p = net.faucet.pow
+        claims_today = store.usage_today(net_key, now)
+        subsidy = (
+            difficulty_mod.block_subsidy_sat(net_key)
+            if pow_mod.is_value_pegged(p, net_key)
+            else None
+        )
+        seconds = pow_mod.compute_target_seconds(
+            p, net_key, amount_sat, balance_sat, claims_today, subsidy
+        )
+        if seconds is None:
+            return None
+        target, expected = pow_mod.seconds_to_target(
+            seconds, pow_mod.reference_hps(p, p.algorithm)
+        )
+        return {
+            "target": target,
+            "expected": expected,
+            "seconds": seconds,
+            "ttl": pow_mod.effective_ttl(seconds, p.ttl_seconds),
+        }
+
+    def _verify_pow(net, net_key, address, sats, challenge, solution, now):
+        """Verify a submitted PoW. Returns ``(verified, challenge_obj, error)``;
+        ``error`` is a user-facing string when a proof was supplied but didn't
+        pass (so the page can report it)."""
+        if not challenge or not solution or sats is None:
+            return False, None, None
+        if not _pow_enabled(net, net_key):
+            return False, None, "Proof of work is not available on this faucet."
+        try:
+            ch = pow_mod.verify(
+                challenge,
+                secret=_POW_SECRET,
+                net=net_key,
+                address=address,
+                amount_sat=sats,
+                now=now,
+            )
+            if pow_mod.check_solution(challenge, solution, ch):
+                return True, ch, None
+            return False, None, (
+                "The proof-of-work solution does not meet the required difficulty."
+            )
+        except pow_mod.PowError as exc:
+            return False, None, str(exc)
+        except pow_mod.PowUnavailable:
+            return False, None, (
+                "Proof of work is temporarily unavailable. Please try again."
+            )
+
+    def _free_available(net, net_key, now) -> bool:
+        """Whether this visitor's one free (no-PoW) claim is still available today."""
+        if not net.faucet.one_per_ip_per_day:
+            return True
+        ip_hash = hash_ip(request.remote_addr, _IP_SALT)
+        if ip_hash is None:
+            return True  # IP unknown => per-IP rule fails open
+        last = store.last_ip_claim(net_key, ip_hash)
+        return last is None or (now - last) >= rules_mod.DAY_SECONDS
+
     def _process(
-        net_key, net, spec, ports, address, amount_raw, client_ip, balance_sat, limits, now
+        net_key, net, spec, ports, address, amount_raw, client_ip, balance_sat,
+        limits, now, challenge="", solution="",
     ) -> dict:
         """Run one dispense request; returns a ``result`` dict for the template.
 
@@ -218,6 +300,10 @@ def create_app(
         first), so the user sees the full list of unmet requirements at once. The
         amount policy (the configurable approval function) is evaluated alongside
         the speed-limit rules and folded into the same ``failures`` list.
+
+        A request may carry a proof-of-work (``challenge`` + ``solution``); a valid
+        proof overrides the one-claim-per-day limit (bounded by the per-day PoW
+        cap), letting a visitor earn extra claims.
         """
         # 1. The address must be valid for this chain (before anything else).
         if not is_valid_address(address, spec.chain):
@@ -227,6 +313,9 @@ def create_app(
             }
 
         failures: list[dict] = []
+        ip_hash = hash_ip(client_ip, _IP_SALT)
+        pow_verified = False
+        pow_challenge = None
 
         # 2. The configurable approval function (the amount policy, e.g. < 1 BTC).
         decision = _approval_for(net)(
@@ -255,13 +344,27 @@ def create_app(
                     }
                 )
         else:
+            # 3a. Verify any submitted proof-of-work (binds net/address/amount).
+            pow_verified, pow_challenge, pow_error = _verify_pow(
+                net, net_key, address, sats, challenge, solution, now
+            )
+            if pow_error:
+                failures.append({"label": "Proof of work", "reason": pow_error})
+
             ctx = rules_mod.RuleContext(
                 net_key=net_key,
-                ip_hash=hash_ip(client_ip, _IP_SALT),
+                ip_hash=ip_hash,
                 requested_sat=sats,
                 balance_sat=balance_sat,
                 now=now,
                 limits=limits,
+                pow_verified=pow_verified,
+                pow_claims_today=(
+                    store.pow_claims_today(net_key, ip_hash, now)
+                    if ip_hash is not None
+                    else 0
+                ),
+                pow_max_per_day=pow_mod.max_per_day(net.faucet.pow, net_key),
             )
             for outcome in rules_mod.evaluate(net.faucet, ctx):
                 entry = {"label": outcome.label, "reason": outcome.reason}
@@ -276,6 +379,22 @@ def create_app(
         if failures:
             return {"status": "disapproved", "failures": failures}
 
+        # 4a. Spend the proof-of-work nonce BEFORE dispensing, so a solved
+        #     challenge can be redeemed exactly once even under concurrent submits.
+        if pow_verified and pow_challenge is not None:
+            expires = pow_challenge.issued_at + pow_challenge.ttl
+            if not store.redeem_nonce(net_key, pow_challenge.nonce, expires):
+                return {
+                    "status": "disapproved",
+                    "failures": [
+                        {
+                            "label": "Proof of work",
+                            "reason": "This challenge has already been used — "
+                            "request a new one.",
+                        }
+                    ],
+                }
+
         # 5. Dispense via the node; surface node errors as a payment failure.
         try:
             txid = FaucetLnd(net_key, spec.chain).send(
@@ -284,14 +403,17 @@ def create_app(
         except FaucetLndError as exc:
             return {"status": "payment_failure", "message": str(exc)}
 
-        # 6. Record the payout, the per-IP claim (for the daily limit), and the
-        #    day's usage count (for the max-per-day cap) — all on success only.
+        # 6. Record the payout and the day's usage count (always). Track the free
+        #    claim and the PoW claim SEPARATELY so a PoW claim never consumes the
+        #    visitor's one free claim for the day (and vice versa).
         amount_btc = _sats_to_btc(sats)
         store.record(net_key, txid, amount_btc, address)
-        ip_hash = hash_ip(client_ip, _IP_SALT)
-        if ip_hash is not None:
-            store.record_ip_claim(net_key, ip_hash, now)
         store.increment_usage(net_key, now)
+        if ip_hash is not None:
+            if pow_verified:
+                store.record_pow_claim(net_key, ip_hash, now)
+            else:
+                store.record_ip_claim(net_key, ip_hash, now)
         base = mempool_mod.explorer_base(cfg, net_key, ports)
         return {
             "status": "success",
@@ -327,6 +449,8 @@ def create_app(
             result = _process(
                 net_key, net, spec, ports, form_address, form_amount,
                 request.remote_addr, balance_sat, limits, now,
+                challenge=(request.form.get("pow_token") or "").strip(),
+                solution=(request.form.get("pow_solution") or "").strip(),
             )
             if result["status"] == "success":
                 form_address = form_amount = ""  # clear on success
@@ -339,6 +463,16 @@ def create_app(
             "min_claim": _fmt_amt(limits.min_claim_sat),
             "max_request": _fmt_amt(limits.max_request_sat),
             "balance_known": balance_sat is not None,
+        }
+
+        pow_enabled = _pow_enabled(net, net_key)
+        pow_view = {
+            "enabled": pow_enabled,
+            "algorithm": net.faucet.pow.algorithm if pow_enabled else None,
+            "free_available": _free_available(net, net_key, now),
+            "max_per_day": pow_mod.max_per_day(net.faucet.pow, net_key),
+            "challenge_url": url_for("faucet_challenge", net_key=net_key),
+            "wasm_url": url_for("static", filename="yespower.wasm"),
         }
 
         return render_template(
@@ -355,9 +489,68 @@ def create_app(
             form_amount=form_amount,
             recent=_recent_rows(net_key, net.faucet.recent_limit, ports),
             limits=limits_view,
+            pow=pow_view,
             mine_help=faucet_mine_help(
                 net_key, cfg.global_.hostname, ports, net.bitcoind.p2p_public
             ),
+        )
+
+    @app.route("/<net_key>/faucet/challenge")
+    def faucet_challenge(net_key: str):
+        """Issue a signed, request-bound PoW challenge for an (address, amount).
+
+        Returns JSON the browser solver consumes. ``available: false`` (with a
+        reason) when PoW is off, the request is malformed, or a value-pegged
+        network has no chain data — the page then falls back to the free claim."""
+        found = _faucet_net(net_key)
+        if found is None:
+            return jsonify({"available": False, "reason": "faucet not available"}), 404
+        net, spec = found
+        if not _pow_enabled(net, net_key):
+            return jsonify(
+                {"available": False, "reason": "proof-of-work is not available"}
+            )
+        address = (request.args.get("address") or "").strip()
+        amount_raw = (request.args.get("amount") or "").strip()
+        if not is_valid_address(address, spec.chain):
+            return jsonify({"available": False, "reason": "invalid address"}), 400
+        sats = _btc_to_sats(amount_raw)
+        if sats is None:
+            return jsonify({"available": False, "reason": "invalid amount"}), 400
+
+        balance_sat = _balance(net_key, spec.chain)
+        now = time.time()
+        info = _pow_target(net, net_key, sats, balance_sat, now)
+        if info is None:
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": "proof-of-work data is temporarily unavailable "
+                    "for this network",
+                }
+            )
+        p = net.faucet.pow
+        token = pow_mod.issue(
+            secret=_POW_SECRET,
+            net=net_key,
+            address=address,
+            amount_sat=sats,
+            algorithm=p.algorithm,
+            target=info["target"],
+            ttl=info["ttl"],
+            nonce=secrets.token_hex(16),
+            now=now,
+        )
+        return jsonify(
+            {
+                "available": True,
+                "token": token,
+                "algorithm": p.algorithm,
+                "target": format(info["target"], "x"),
+                "expected_hashes": info["expected"],
+                "est_seconds": info["seconds"],
+                "ttl": info["ttl"],
+            }
         )
 
     @app.route("/healthz")

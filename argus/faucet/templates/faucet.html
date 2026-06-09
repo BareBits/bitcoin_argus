@@ -50,6 +50,17 @@
   .faucet-limits ul { padding-left: 1.1rem; margin: 0.4rem 0; }
   .faucet-limits li { margin-bottom: 0.3rem; font-size: 0.9rem; }
   .faucet-limits .big { font-size: 1.3rem; font-weight: 600; }
+  .faucet-pow-panel { margin: 0.8rem 0; }
+  .faucet-pow-track {
+    height: 0.5rem; border-radius: 3px; overflow: hidden;
+    background: var(--bg, #0b1020); border: 1px solid var(--line-bright, #888);
+  }
+  .faucet-pow-fill {
+    height: 100%; width: 0; background: var(--accent, #0d6efd);
+    transition: width 0.2s linear;
+  }
+  #faucet-pow-status { margin: 0.4rem 0; min-height: 1.1em; }
+  .faucet-btn-ghost { background: transparent; color: var(--accent, #0d6efd); }
   .mine-notice { border-color: var(--accent, #0d6efd); background: rgba(13,110,253,0.08); }
   .mine-notice pre.mine-cmd {
     margin: 0.5rem 0; padding: 0.6rem 0.8rem; overflow-x: auto;
@@ -137,7 +148,7 @@
 
 <div class="faucet-grid">
   <div class="faucet-form">
-    <form method="post" action="{{ request.path }}" autocomplete="off">
+    <form method="post" action="{{ request.path }}" autocomplete="off" id="faucet-form">
       <div class="faucet-field">
         <label for="faucet-address">Your {{ net_title }} address</label>
         <input type="text" id="faucet-address" name="address"
@@ -150,8 +161,35 @@
                value="{{ form_amount }}" inputmode="decimal"
                placeholder="e.g. 0.01" required>
       </div>
+      <input type="hidden" name="pow_token" value="">
+      <input type="hidden" name="pow_solution" value="">
       <button class="faucet-btn" type="submit">Request funds</button>
     </form>
+
+    {% if pow.enabled %}
+    <div id="faucet-pow-panel" class="faucet-pow-panel" hidden>
+      <div class="faucet-pow-track"><div id="faucet-pow-bar" class="faucet-pow-fill"></div></div>
+      <p id="faucet-pow-status" class="cache-note"></p>
+      <button type="button" id="faucet-pow-cancel" class="faucet-btn faucet-btn-ghost">Cancel</button>
+    </div>
+    {% if not pow.free_available %}
+    <p class="blurb">
+      You've used today's free claim. You can <strong>earn another</strong> by
+      proving work — your browser solves a small computational puzzle
+      ({{ pow.algorithm }}){% if pow.max_per_day %} (up to {{ pow.max_per_day }}
+      proof-of-work claim{{ '' if pow.max_per_day == 1 else 's' }} per day on this
+      network){% endif %}. Just submit and the puzzle runs automatically.
+    </p>
+    {% endif %}
+    <div id="faucet-pow"
+         data-enabled="true"
+         data-algorithm="{{ pow.algorithm }}"
+         data-free-available="{{ 'true' if pow.free_available else 'false' }}"
+         data-max-per-day="{{ pow.max_per_day }}"
+         data-challenge-url="{{ pow.challenge_url }}"
+         data-wasm-url="{{ pow.wasm_url }}"
+         data-worker-url="{{ url_for('static', filename='faucet-pow-worker.js') }}"></div>
+    {% endif %}
     <p class="blurb">{{ explanation }}</p>
   </div>
 
@@ -238,4 +276,8 @@
   <p class="cache-note">No payouts yet — be the first to grab some coins.</p>
   {% endif %}
 </details>
+
+{% if pow.enabled %}
+<script src="{{ url_for('static', filename='faucet.js') }}" defer></script>
+{% endif %}
 {% endblock %}

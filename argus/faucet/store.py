@@ -28,6 +28,7 @@ from peewee import (
     CharField,
     FloatField,
     IntegerField,
+    IntegrityError,
     Model,
     SqliteDatabase,
     fn,
@@ -86,6 +87,34 @@ class DailyUsage(Model):
         indexes = ((("net", "day"), True),)  # unique
 
 
+class RedeemedNonce(Model):
+    """A single-use proof-of-work challenge nonce that has been spent, kept until
+    the challenge would have expired. Backs PoW replay protection: a solved
+    challenge can be redeemed exactly once (see :mod:`argus.faucet.pow`)."""
+
+    net = CharField()
+    nonce = CharField()
+    expires_at = FloatField()
+
+    class Meta:
+        database = database
+        indexes = ((("net", "nonce"), True),)  # unique
+
+
+class PowDailyClaim(Model):
+    """Per-``(net, salted-IP-hash, UTC-day)`` count of PoW-earned claims, so a
+    network can cap PoW claims per IP per day (testnet3 allows one)."""
+
+    net = CharField()
+    ip_hash = CharField()
+    day = IntegerField()  # day_ordinal()
+    count = IntegerField(default=0)
+
+    class Meta:
+        database = database
+        indexes = ((("net", "ip_hash", "day"), True),)  # unique
+
+
 class Maintenance(Model):
     """Singleton row coordinating the daily purge across worker processes."""
 
@@ -104,7 +133,9 @@ def init_db(path: str | None = None) -> None:
     database.init(db_path)
     if database.is_closed():
         database.connect(reuse_if_open=True)
-    database.create_tables([Payout, IpClaim, DailyUsage, Maintenance])
+    database.create_tables(
+        [Payout, IpClaim, DailyUsage, RedeemedNonce, PowDailyClaim, Maintenance]
+    )
     # Seed the single maintenance row (last_run=0 => the first claim wins).
     if not Maintenance.select().exists():
         Maintenance.create(last_run=0.0)
@@ -194,6 +225,14 @@ def increment_usage(net: str, ts: float | None = None) -> None:
         )
 
 
+def usage_today(net: str, now: float | None = None) -> int:
+    """Successful-withdrawal count for ``net`` on the current UTC day (drives the
+    PoW demand-retarget factor)."""
+    day = day_ordinal(time.time() if now is None else now)
+    row = DailyUsage.get_or_none((DailyUsage.net == net) & (DailyUsage.day == day))
+    return row.count if row else 0
+
+
 def usage_stats(net: str, now: float | None = None) -> tuple[int, int]:
     """``(expected_365, historical_max)`` for ``net``.
 
@@ -229,6 +268,74 @@ def purge_usage(now: float | None = None) -> int:
     """Delete usage rows older than the retention window. Returns rows removed."""
     cutoff = day_ordinal(time.time() if now is None else now) - USAGE_RETENTION_DAYS
     return DailyUsage.delete().where(DailyUsage.day < cutoff).execute()
+
+
+# -- proof-of-work: single-use nonces ----------------------------------------
+
+
+def redeem_nonce(net: str, nonce: str, expires_at: float) -> bool:
+    """Atomically mark ``(net, nonce)`` spent. Returns ``True`` if this caller
+    won the redemption (the nonce was unseen), ``False`` if it was already spent
+    — which is exactly the replay rejection. The ``(net, nonce)`` UNIQUE index
+    makes the second insert raise, so concurrent redemptions can't both win."""
+    try:
+        RedeemedNonce.insert(net=net, nonce=nonce, expires_at=expires_at).execute()
+        return True
+    except IntegrityError:
+        return False
+
+
+def purge_redeemed_nonces(now: float | None = None) -> int:
+    """Delete spent-nonce rows whose challenges have expired. Returns rows removed."""
+    cutoff = time.time() if now is None else now
+    return RedeemedNonce.delete().where(RedeemedNonce.expires_at < cutoff).execute()
+
+
+# -- proof-of-work: per-IP daily claim counts --------------------------------
+
+
+def pow_claims_today(net: str, ip_hash: str, ts: float | None = None) -> int:
+    """How many PoW-earned claims ``ip_hash`` has made on ``net`` this UTC day."""
+    day = day_ordinal(time.time() if ts is None else ts)
+    row = PowDailyClaim.get_or_none(
+        (PowDailyClaim.net == net)
+        & (PowDailyClaim.ip_hash == ip_hash)
+        & (PowDailyClaim.day == day)
+    )
+    return row.count if row else 0
+
+
+def record_pow_claim(net: str, ip_hash: str, ts: float | None = None) -> None:
+    """Increment ``ip_hash``'s PoW-claim count for ``net`` on the current UTC day."""
+    day = day_ordinal(time.time() if ts is None else ts)
+    updated = (
+        PowDailyClaim.update(count=PowDailyClaim.count + 1)
+        .where(
+            (PowDailyClaim.net == net)
+            & (PowDailyClaim.ip_hash == ip_hash)
+            & (PowDailyClaim.day == day)
+        )
+        .execute()
+    )
+    if not updated:
+        (
+            PowDailyClaim.insert(net=net, ip_hash=ip_hash, day=day, count=1)
+            .on_conflict(
+                conflict_target=[
+                    PowDailyClaim.net,
+                    PowDailyClaim.ip_hash,
+                    PowDailyClaim.day,
+                ],
+                update={PowDailyClaim.count: PowDailyClaim.count + 1},
+            )
+            .execute()
+        )
+
+
+def purge_pow_claims(now: float | None = None) -> int:
+    """Delete PoW-claim count rows older than a day. Returns rows removed."""
+    cutoff = day_ordinal(time.time() if now is None else now) - 1
+    return PowDailyClaim.delete().where(PowDailyClaim.day < cutoff).execute()
 
 
 # -- maintenance coordination ------------------------------------------------

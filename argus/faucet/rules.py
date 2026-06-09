@@ -56,7 +56,12 @@ class Limits:
 
 @dataclass(frozen=True)
 class RuleContext:
-    """Everything the rules need to know about one request."""
+    """Everything the rules need to know about one request.
+
+    ``pow_verified`` is set when the request carried a valid proof-of-work, which
+    overrides the one-claim-per-day limit but is itself bounded by the per-day
+    PoW cap (``pow_max_per_day``; 0 = unlimited). ``pow_claims_today`` is how many
+    PoW claims this IP has already made today, for that cap."""
 
     net_key: str
     ip_hash: str | None
@@ -64,6 +69,9 @@ class RuleContext:
     balance_sat: int | None
     now: float
     limits: Limits
+    pow_verified: bool = False
+    pow_claims_today: int = 0
+    pow_max_per_day: int = 0
 
 
 def compute_limits(faucet_cfg, net_key: str, balance_sat: int | None, now: float) -> Limits:
@@ -102,6 +110,8 @@ def _fmt(sats: int) -> str:
 
 
 def _one_per_ip_per_day(cfg, ctx: RuleContext) -> RuleOutcome | None:
+    if ctx.pow_verified:
+        return None  # a valid proof-of-work earns a claim past the daily limit
     if not cfg.one_per_ip_per_day or ctx.ip_hash is None:
         return None  # disabled, or client IP unknown => fail open
     last = store.last_ip_claim(ctx.net_key, ctx.ip_hash)
@@ -152,9 +162,30 @@ def _min_claim(cfg, ctx: RuleContext) -> RuleOutcome | None:
     )
 
 
+def _pow_daily_cap(cfg, ctx: RuleContext) -> RuleOutcome | None:
+    """Cap PoW-earned claims per IP per day (e.g. testnet3 allows one). Only
+    applies to a request that carried a valid proof-of-work."""
+    if not ctx.pow_verified or ctx.pow_max_per_day <= 0:
+        return None
+    if ctx.pow_claims_today < ctx.pow_max_per_day:
+        return None
+    next_day = (int(ctx.now // DAY_SECONDS) + 1) * DAY_SECONDS
+    n = ctx.pow_max_per_day
+    return RuleOutcome(
+        passed=False,
+        label="Daily proof-of-work limit",
+        reason=(
+            f"This network allows {n} proof-of-work "
+            f"claim{'' if n == 1 else 's'} per IP per day."
+        ),
+        retry_after=next_day,
+    )
+
+
 # Order here is the order failures are reported in.
 RULES = (
     _one_per_ip_per_day,
+    _pow_daily_cap,
     _max_amount_per_day,
     _per_request_balance_cap,
     _min_claim,

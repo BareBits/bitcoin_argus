@@ -103,6 +103,12 @@ NETWORK_SPECS: dict[str, NetworkSpec] = {
     ),
 }
 
+# Real-value testnets: their coins trade for actual money, so the faucet's
+# proof-of-work for them is pegged to the cost of mining the coins (see
+# argus.faucet.pow) rather than a flat time. Currently only testnet3.
+VALUE_NETWORKS: frozenset[str] = frozenset({"testnet3"})
+
+
 # Conventional *internal* (in-container) ports per chain. They can be identical
 # across networks because each network runs in its own isolated compose project;
 # the host-facing ports come from the allocator below.

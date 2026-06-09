@@ -15,6 +15,7 @@ from .cashupayserver import generate_cashupayserver
 from .config import ArgusConfig, ConfigError, load_config
 from .constants import NETWORK_SPECS
 from .credentials import generate_credentials
+from .faucet.pow import is_value_pegged as is_pow_value_pegged
 from .context import BuildContext, Fragment
 from .firewall import generate_firewall
 from .onionkey import OnionKey
@@ -146,6 +147,23 @@ def generate(
             print(
                 f"warning: [{k}] Ark is enabled but unsupported on this network's "
                 f"chain ({NETWORK_SPECS[k].chain}); skipping it here.",
+                file=sys.stderr,
+            )
+        # The value-pegged PoW regime (testnet3) needs the self-hosted mempool
+        # explorer for the current block subsidy; without it PoW can't be offered
+        # there and the faucet falls back to the one free claim per day.
+        if (
+            net.faucet.enabled
+            and net.faucet.pow.enabled
+            and is_pow_value_pegged(net.faucet.pow, k)
+            and not net.mempool_enabled(NETWORK_SPECS[k])
+        ):
+            print(
+                f"warning: [{k}] faucet proof-of-work is value-pegged but this "
+                f"network's mempool explorer is disabled; PoW needs it for the "
+                f"block subsidy, so PoW-earned claims will be unavailable here "
+                f"(the free daily claim still works). Enable mempool for {k} to "
+                f"offer proof-of-work.",
                 file=sys.stderr,
             )
 
