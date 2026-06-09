@@ -26,6 +26,7 @@ that network.
 | **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
 | **mempool** | Block explorer | HTTP via shared proxy |
 | **miner** (regtest / custom signets) | Produces a (signed, for signet) block every minute | — |
+| **claimer** (testnet3 / testnet4) *(opt-in)* | Grinds the minimum-difficulty blocks the testnet "20-minute rule" hands out (see below) | — |
 | **reset controller** (mined nets) | Auto-resets a network when its chain outgrows a cap | none (Docker socket only) |
 
 A single host-level **Caddy** terminates TLS for all HTTP services across all
@@ -60,6 +61,50 @@ operator can also run a `reset.sh` by hand at any time. The controller mounts th
 generated tree at its identical host path, so it must be started with
 `ARGUS_DEPLOY_ROOT` pointing at the absolute path of `generated/` (see step 3 of
 the deploy commands above).
+
+### Min-difficulty claimer (testnet3 / testnet4)
+
+The public testnets carry a quirk: under the **"20-minute rule"**, whenever no
+block has been found for 20 minutes (twice the 10-minute target spacing) the next
+block may be mined at the **minimum difficulty** (difficulty 1). The rarer **full
+difficulty reset** — when a big miner ramps difficulty up then leaves — drops the
+whole chain to ~difficulty 1 for a stretch. Either way the cheap blocks go to
+whoever is watching.
+
+The optional **claimer** sidecar (off by default; only valid on testnet3 /
+testnet4) watches `getblocktemplate` and, whenever the next-block difficulty is at
+or below `claimer.max_difficulty` (default `1.0`), grinds a coinbase-only block to
+a dedicated `claimer` wallet and submits it. It is **aggressive on reset**: in a
+normal 20-minute window it captures the one min-difficulty block, but while a full
+reset keeps the chain easy it mines back-to-back (bounded per cycle so the monitor
+keeps running). The proof-of-work is found with `bitcoin-util grind` over the
+80-byte header, and block assembly reuses Bitcoin Core's vendored `test_framework`
+(shared with the signet miner).
+
+It writes a status snapshot (`/state/claimer.json`: difficulty, window state,
+blocks claimed, balance) that the dashboard reads via the read-only Docker socket
+proxy, exactly like the donations/reset figures. When the network's **faucet** is
+enabled, captured coins **auto-forward** once matured to the faucet's LND on-chain
+wallet (sent to the stable deposit address the LND node-info sidecar maintains),
+so the claimer refills the faucet; with the faucet off (or
+`claimer.forward_to_faucet: false`) coins simply accumulate in the `claimer`
+wallet. Note testnet3's subsidy is now tiny (it has had many halvings), so the
+captured value there is small — testnet4 is where the volume is.
+
+```yaml
+networks:
+  testnet4:
+    claimer:
+      enabled: true            # off by default
+      max_difficulty: 1.0      # only mine at/below this difficulty
+      forward_to_faucet: null  # null => forward iff the faucet is enabled
+      forward_threshold_btc: 0.001
+```
+
+> ⚠️ These are real, shared networks Argus does **not** control — the claimer only
+> opportunistically grabs the easy blocks the rules hand out; it cannot drive
+> block production. It needs a synced node with peers (it waits for sync before
+> mining).
 
 ## How it works
 

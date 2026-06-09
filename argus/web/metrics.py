@@ -41,6 +41,7 @@ _LND_LIQUIDITY_PATH = "/home/lnd/.lnd/argus_liquidity.json"
 _DONATIONS_PATH = "/state/donations.json"
 
 from ..constants import (
+    CLAIMER_STATE_FILE,
     NETWORK_ORDER,
     RESET_CONTROLLER_CONTAINER,
     RESET_STATE_FILE,
@@ -165,6 +166,9 @@ class MetricsResult:
     fedimint: dict[str, str] = field(default_factory=dict)
     # donations[net_key] -> {"address", "total_received", "balance"} (BTC strings).
     donations: dict[str, dict[str, str]] = field(default_factory=dict)
+    # claimer[net_key] -> the min-difficulty claimer's snapshot (difficulty,
+    # window state, blocks claimed, balance) on testnet3/testnet4.
+    claimer: dict[str, dict] = field(default_factory=dict)
     # reset[net_key] -> {"size_on_disk", "limit_bytes", "block_interval_seconds",
     # "max_size_gb"} as published by the auto-reset controller.
     reset: dict[str, dict] = field(default_factory=dict)
@@ -180,6 +184,7 @@ class MetricsResult:
             "liquidity": self.liquidity,
             "fedimint": self.fedimint,
             "donations": self.donations,
+            "claimer": self.claimer,
             "reset": self.reset,
             "errors": self.errors,
         }
@@ -260,6 +265,24 @@ def _donation_info(client, net_key: str) -> dict[str, str] | None:
             "total_received": data.get("total_received"),
             "balance": data.get("balance"),
         }
+    except Exception:
+        return None
+
+
+def _claimer_info(client, net_key: str) -> dict | None:
+    """Read the min-difficulty claimer's status snapshot for ``net_key``.
+
+    Uses get_archive (a GET, allowed by the read-only socket proxy), like the
+    donation/LND readers. Returns None if the sidecar isn't deployed (the claimer
+    only runs on testnet3/testnet4 when enabled) or hasn't written a usable file.
+    """
+    try:
+        ct = client.containers.get(f"argus-{net_key}-claimer")
+        bits, _ = ct.get_archive(CLAIMER_STATE_FILE)
+        tf = tarfile.open(fileobj=io.BytesIO(b"".join(bits)))
+        member = tf.extractfile(tf.getmembers()[0])
+        data = json.loads(member.read().decode())
+        return data if isinstance(data, dict) else None
     except Exception:
         return None
 
@@ -458,6 +481,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
     liquidity: dict[str, dict[str, dict]] = {}
     fedimint: dict[str, str] = {}
     donations: dict[str, dict[str, str]] = {}
+    claimer: dict[str, dict] = {}
     reset: dict[str, dict] = {}
     errors: list[str] = []
 
@@ -536,6 +560,9 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
             info = _donation_info(client, net_key)
             if info:
                 donations[net_key] = info
+            claim = _claimer_info(client, net_key)
+            if claim:
+                claimer[net_key] = claim
 
         # Auto-reset controller state (single file, keyed by network).
         reset = _reset_state(client)
@@ -554,6 +581,7 @@ def collect(net_keys: list[str] | None = None) -> MetricsResult:
         liquidity=liquidity,
         fedimint=fedimint,
         donations=donations,
+        claimer=claimer,
         reset=reset,
         errors=errors + herrs,
     )

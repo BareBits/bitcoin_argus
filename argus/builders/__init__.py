@@ -10,10 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from ..constants import CLAIM_NETWORKS
 from ..context import BuildContext, Fragment
 from .ark import build_ark
 from .bitcoind import build_bitcoind
 from .cashu import build_cashu
+from .claimer import build_claimer
 from .cashu_wallet import build_cashu_wallet
 from .cashupayserver import build_cashupayserver
 from .donations import build_donations
@@ -65,6 +67,13 @@ REGISTRY: list[SubTool] = [
         "miner",
         build_miner,
         lambda c: c.spec.supports_miner and c.net.miner.enabled,
+    ),
+    # Opportunistic min-difficulty block claimer for the real testnets
+    # (testnet3/testnet4). Config validation restricts it to CLAIM_NETWORKS.
+    SubTool(
+        "claimer",
+        build_claimer,
+        lambda c: c.net_key in CLAIM_NETWORKS and c.net.claimer.enabled,
     ),
     # Donation address + figures writer. Always on: it works off bitcoind (always
     # present), reusing the miner's wallet where there is one.

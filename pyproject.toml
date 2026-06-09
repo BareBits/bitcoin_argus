@@ -26,4 +26,4 @@ packages = ["argus", "argus.builders", "argus.web"]
 
 [tool.setuptools.package-data]
 "argus.web" = ["templates/*.html", "static/**/*", "requirements.txt"]
-"argus" = ["signet_miner/**/*", "signet_miner/miner"]
+"argus" = ["signet_miner/**/*", "signet_miner/miner", "claimer_src/**/*"]
