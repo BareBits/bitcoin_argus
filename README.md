@@ -3,7 +3,7 @@
 Self-contained, reproducible **Bitcoin testnet development environments**. From a
 single `config.yaml`, Argus generates an isolated Docker Compose project per
 enabled network, each bundling the services a developer needs to build against
-that network.
+that network. This is **experimental** software, expect it to lose your funds.
 
 > **Status: all phases complete.** The full stack — bitcoind, LND, Fulcrum,
 > Cashu, mempool, Bitcart (with its Neutrino LND), and the shared Caddy/TLS layer
@@ -19,10 +19,10 @@ that network.
 | **Fulcrum** (≥1) | Electrum server for light wallets + mempool backend | Electrum port open |
 | **Cashu** (nutshell) | Ecash mint | HTTP via shared proxy |
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
-| **Fedimint** (`fedimintd` + `gatewayd`) | Federated ecash mint (1–3 guardians) + a Lightning gateway per ring node; alongside Cashu (see below) | Guardian + gateway APIs via shared proxy |
-| **Ark ASP** (`captaind` + `cln`) *(opt-in)* | Ark server (off-chain VTXOs) + a Core Lightning bridge that opens one channel into the ring (see below) | Ark gRPC via shared proxy; CLN P2P open |
-| **Bitcart** | Payment processor (its own LND) | HTTP via shared proxy |
-| **CashuPayServer** | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
+| **Fedimint** (`fedimintd` + `gatewayd`, experimental) | Federated ecash mint (1–3 guardians) + a Lightning gateway per ring node; alongside Cashu (see below) | Guardian + gateway APIs via shared proxy |
+| **Ark ASP** (`captaind` + `cln`) *(opt-in, experimental)* | Ark server (off-chain VTXOs) + a Core Lightning bridge that opens one channel into the ring (see below) | Ark gRPC via shared proxy; CLN P2P open |
+| **Bitcart** (barebits fork w/ LND support) | Payment processor (its own LND) | HTTP via shared proxy |
+| **CashuPayServer** (barebits fork w/ on-chain support) | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
 | **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
 | **mempool** | Block explorer | HTTP via shared proxy |
 | **miner** (regtest / custom signets) | Produces a (signed, for signet) block every minute | — |
@@ -157,15 +157,6 @@ sudo bash generated/firewall.sh                       # open the public ports
 #    ARGUS_DEPLOY_ROOT must be the ABSOLUTE host path to generated/.
 cd generated/reset && ARGUS_DEPLOY_ROOT="$(cd .. && pwd)" docker compose up -d --build
 ```
-
-> **With Tor enabled, bring up `generated/shared-tor` before the per-network
-> stacks.** Each network's secondary LND node runs in Tor mode and validates its
-> onion address through the shared SOCKS proxy at startup, so it needs the proxy
-> reachable. The per-network compose enforces this with a one-shot `*-tor-wait`
-> sidecar that gates the node on the proxy (timing out after 5 minutes), so a
-> slightly-out-of-order `up` self-corrects rather than crash-looping — but
-> starting Tor first avoids the wait entirely.
-
 ### Lightning liquidity ring
 
 By default every network runs a **three-node Lightning liquidity ring** —
@@ -701,17 +692,3 @@ primary (`argus1`) is clearnet-only outbound, so it has no such dependency.
   Each shows its own "resets in X" countdown on the dashboard. The miner image is
   built from the stock bitcoind image plus the vendored Bitcoin Core signet miner
   (see `argus/signet_miner/`); no Knots build is needed.
-
-## Roadmap
-
-- [x] Phase 1 — config + validation + port allocator + regtest chain & miner
-- [x] Phase 2 — standalone LND (bitcoind-backed, auto-init wallet)
-- [x] Phase 3 — Fulcrum (Electrum server; one+ per network)
-- [x] Phase 4 — shared Caddy (host-level TLS) + Cashu mint
-- [x] Phase 5 — mempool explorer (Fulcrum-backed; default-on regtest/custom signets/mutinynet)
-- [x] Phase 6 — Bitcart (BareBits installer, own Neutrino LND → our bitcoind, behind Caddy)
-- [x] Phase 7 — all networks (testnet3/4, mutinynet, custom signets) wired + validated
-- [x] Phase 8 — firewall script, SSL path, deploy docs
-- [x] Dashboard — welcome/status web server (themes, live per-service metrics)
-- [x] Self-mined custom signet — auto challenge/key + signet-miner sidecar
-- [x] Tor — single onion fronting every sub-tool (port-routed) + LND onion advertisement
