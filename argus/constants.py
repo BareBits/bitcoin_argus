@@ -228,6 +228,13 @@ PORT_OFFSETS: dict[str, int] = {
     "ark_cln_p2p": 603,  # PUBLIC (the Ark bridge is a reachable LN node)
     "ark_cln_grpc": 604,  # 127.0.0.1 CLN gRPC (debug)
     "ark_cln_hold": 605,  # 127.0.0.1 hold-invoice plugin gRPC (debug)
+    # Electrum submarine-swap provider + its local Nostr relay. The Electrum
+    # daemon's JSON-RPC stays loopback (debug); the relay's WebSocket is fronted
+    # publicly by the shared Caddy (wss) so external testers can discover the
+    # provider, with its ws backend host-published on loopback for Caddy to proxy.
+    "electrum_rpc": 700,  # 127.0.0.1 (Electrum daemon JSON-RPC, debug)
+    "nostr_relay_public": 701,  # Caddy public listener (wss -> relay ws)
+    "nostr_relay_backend": 702,  # 127.0.0.1 relay ws backend (Caddy proxies here)
 }
 
 # In-container listen ports for the storefront services (identical across the
@@ -466,4 +473,46 @@ ARK_RING_NODES: dict[str, tuple[str, str]] = {
     "argus1": ("lnd", "lnd_data"),
     "argus2": ("lnd2", "lnd2_data"),
     "argus3": ("lnd3", "lnd3_data"),
+}
+
+
+# --- Electrum submarine-swap provider + Nostr relay -------------------------
+
+# One Electrum wallet per network runs the swapserver plugin (Electrum >= 4.6),
+# announcing swap offers over a local Nostr relay. The Electrum daemon's JSON-RPC
+# listens here in-container (host-published on loopback only, for debug); the
+# setup happens inside the same container so no cross-container RPC is needed.
+ELECTRUM_INTERNAL_PORTS: dict[str, int] = {"rpc": 7000}
+
+# The two Nostr event kinds Electrum's submarine-swap discovery uses. The relay's
+# write policy accepts ONLY these: 30315 = the swap OFFER announcement (a NIP-38
+# replaceable event), 25582 = the encrypted client<->server negotiation DM (an
+# ephemeral event, range 20000-29999 — stored briefly so it still reaches live
+# subscribers, then swept by retention). Verified in spesmilo/electrum
+# submarine_swaps.py (NostrTransport). Restricting to only the offer kind would
+# let offers appear but no swap could execute, so BOTH must be allowed.
+ELECTRUM_SWAP_OFFER_KIND = 30315
+ELECTRUM_SWAP_DM_KIND = 25582
+ELECTRUM_SWAP_KINDS: tuple[int, int] = (ELECTRUM_SWAP_OFFER_KIND, ELECTRUM_SWAP_DM_KIND)
+
+# Electrum tags its offers so a relay/client can filter to just its swap traffic:
+# a `d` tag "electrum-swapserver-<N>" and an `r` tag "net:<network>". N is
+# NOSTR_EVENT_VERSION in submarine_swaps.py (5 at the time of writing). We do not
+# hard-filter on these (the version can bump), only on the two kinds above.
+
+# The Nostr relay's in-container WebSocket port (strfry's default). Host-published
+# on loopback (nostr_relay_backend) so the host-networked Caddy can proxy wss to
+# it; the local Electrum wallet reaches it in-cluster at ws://nostr-relay:7777.
+NOSTR_RELAY_INTERNAL_PORT = 7777
+
+# How the Electrum swap server maps each Argus chain to Electrum's own network
+# selector (the CLI flag: --regtest / --testnet / --testnet4 / --signet). Electrum
+# has no distinct selector for custom signets or mutinynet — they all run under
+# --signet (they report as signet), matching how LND/Ark treat them. testnet3's
+# bitcoind selector "test" is Electrum's --testnet.
+ELECTRUM_NETWORK_FLAG: dict[str, str] = {
+    "regtest": "regtest",
+    "test": "testnet",
+    "testnet4": "testnet4",
+    "signet": "signet",
 }

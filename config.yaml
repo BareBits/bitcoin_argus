@@ -248,6 +248,27 @@ networks:
 #               # the CLN bridge's P2P port is opened so it is a reachable LN node.
 #               # See `argus credentials` for the server URL + where to read the
 #               # deposit addresses. Set ark.enabled false to opt out per network.
+#   electrum: { enabled, reserve_btc, channel_btc, target_node, fee_millionths,
+#               pow_target, funding, extra_config: {...},
+#               relay: { enabled, retention_hours, public, ssl, extra_relays: [...] } }
+#               # ONE Electrum wallet run as a submarine-swap PROVIDER, advertised
+#               # over a local Nostr relay. Electrum's Lightning is a non-routing
+#               # client, so it can't join the LND ring's rebalancing triangle;
+#               # instead it opens ONE channel into the ring (target_node, default
+#               # argus1; channel_btc, default 0.5, 50/50 from the start) and holds a
+#               # large on-chain reserve_btc (default 5) — the fuel a swap server
+#               # self-heals with, swapping on-chain<->Lightning rather than routing.
+#               # It runs Electrum's swapserver plugin (>= 4.6, built from source),
+#               # announcing offers (fee_millionths, default 5000; pow_target, default
+#               # 0 = instant startup) on the relay. ON by default for every network.
+#               # funding: 'auto' mines reserve+channel on mineable nets, 'external'
+#               # waits for coins sent to the printed address (null => auto iff Argus
+#               # mines with the miner on). The relay accepts ONLY the two Electrum
+#               # swap kinds (30315 offer + 25582 negotiation) and expires events
+#               # > retention_hours (default 24); its WebSocket is fronted publicly by
+#               # the shared Caddy (wss) so outside testers can discover the provider.
+#               # Needs a Fulcrum indexer (its Electrum server). Set electrum.enabled
+#               # false to opt out; relay.enabled false to skip the local relay.
 #   bitcart:  { enabled, ssl, branch, admin_email, btclnd_debug,
 #               btclnd_p2p_pool_size,
 #               liquidity: { disabled, automatic_channel_creation,

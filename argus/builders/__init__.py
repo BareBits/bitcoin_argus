@@ -19,6 +19,7 @@ from .claimer import build_claimer
 from .cashu_wallet import build_cashu_wallet
 from .cashupayserver import build_cashupayserver
 from .donations import build_donations
+from .electrum import build_electrum
 from .fedimint import build_fedimint
 from .fulcrum import build_fulcrum
 from .lnd import build_lnd
@@ -52,6 +53,10 @@ REGISTRY: list[SubTool] = [
     # Ark ASP (captaind + a Core Lightning bridge that opens one channel into the
     # ring). Auto-disabled on any chain Ark can't run (none today; see config).
     SubTool("ark", build_ark, lambda c: c.net.ark_enabled(c.spec)),
+    # Electrum submarine-swap provider + its local Nostr relay (one Electrum wallet
+    # that opens one channel into the ring and announces swap offers on nostr).
+    # On by default; needs a Fulcrum indexer + a ring node (validated in config).
+    SubTool("electrum", build_electrum, lambda c: c.net.electrum_enabled(c.spec)),
     # CashuPayServer (BTCPay-compatible gateway) and the WooCommerce storefront
     # that points at it. CashuPayServer is listed first so its pairing volume is
     # declared before WooCommerce references it (order is cosmetic for volumes,

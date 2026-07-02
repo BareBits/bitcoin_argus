@@ -66,6 +66,11 @@ def _public_rules(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list
             # opened too so the Ark bridge is a reachable Lightning node.
             rules.append((str(ports["ark_captaind_public"]), f"{net_key} ark server"))
             rules.append((str(ports["ark_cln_p2p"]), f"{net_key} ark cln p2p"))
+        if net.electrum_relay_enabled(spec) and net.electrum.relay.public:
+            # The Nostr relay's WebSocket is fronted by the host-networked Caddy
+            # (wss), so default-deny ufw must allow its public port — that's how
+            # external testers discover the swap provider and negotiate swaps.
+            rules.append((str(ports["nostr_relay_public"]), f"{net_key} nostr relay"))
         if net.mempool_enabled(spec):
             rules.append((str(ports["mempool_public"]), f"{net_key} mempool"))
         if net.bitcart.enabled:

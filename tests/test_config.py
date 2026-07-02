@@ -76,8 +76,11 @@ def test_prune_conflicts_with_indexes(extra):
 
 
 def test_prune_ok_without_indexes():
+    # No indexers at all, so the Electrum swap provider (which needs a Fulcrum
+    # Electrum server) must be off too; this test is only about prune vs indexes.
     net = {"enabled": True, "prune": 550, "bitcart": BITCART_OFF,
-           "indexers": [], "mempool": {"enabled": False}}
+           "indexers": [], "mempool": {"enabled": False},
+           "electrum": {"enabled": False}}
     validated(make({"regtest": net}))  # no raise
 
 
