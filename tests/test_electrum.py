@@ -157,6 +157,24 @@ def test_electrum_entrypoint_runs_daemon_foreground(tmp_path):
     assert "plugins.swapserver.enabled true" in ep
     # It opens one channel with a push to land 50/50.
     assert "--push_amount" in ep
+    # It pins the server (auto_connect off, or oneserver resets it to localhost)
+    # and raises the funding cap so the 0.5 BTC (> 2^24 sat) channel can open.
+    assert "auto_connect false" in ep
+    assert "lightning_max_funding_sat" in ep
+
+
+def test_electrum_large_channel_forces_ring_wumbo():
+    # Electrum's default 0.5 BTC channel exceeds the 2^24 sat legacy cap, so the
+    # ring node it opens into must advertise wumbo for the open to succeed.
+    spec = NETWORK_SPECS["regtest"]
+    cfg = validated(make({"regtest": _NET}))
+    assert cfg.networks["regtest"].lnd_wumbo_enabled(spec) is True
+    # A sub-cap Electrum channel doesn't force wumbo on its own (small ring too).
+    cfg2 = validated(make({"regtest": {
+        **_NET,
+        "lnd": {"channels": {"channel_btc": 0.05}},
+        "electrum": {"channel_btc": 0.1}}}))
+    assert cfg2.networks["regtest"].lnd_wumbo_enabled(spec) is False
 
 
 def test_electrum_relays_env_points_at_local_relay(tmp_path):

@@ -1203,11 +1203,18 @@ class NetworkCfg(_Base):
 
     def lnd_wumbo_enabled(self, spec: NetworkSpec) -> bool:
         """Effective wumbo: explicit, or forced on when a large auto-channel needs it."""
+        # Max non-wumbo channel is 16,777,215 sat (~0.167 BTC).
+        legacy_max = 16_777_215
         if self.lnd.wumbo:
             return True
         if self.lnd_channels_enabled(spec):
-            # Max non-wumbo channel is 16,777,215 sat (~0.167 BTC).
-            return round(self.lnd.channels.channel_btc * 1e8) > 16_777_215
+            if round(self.lnd.channels.channel_btc * 1e8) > legacy_max:
+                return True
+        # The Electrum swap wallet opens a channel INTO the ring; if it exceeds the
+        # legacy cap, the ring node must advertise wumbo or Electrum's open fails.
+        if self.electrum_enabled(spec):
+            if round(self.electrum.channel_btc * 1e8) > legacy_max:
+                return True
         return False
 
 
