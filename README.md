@@ -21,6 +21,7 @@ that network. This is **experimental** software, expect it to lose your funds.
 | **cashu.me** (web wallet) | Browser wallet (built from source), one per mint, pre-pointed at it | HTTP via shared proxy |
 | **Fedimint** (`fedimintd` + `gatewayd`, experimental) | Federated ecash mint (1–3 guardians) + a Lightning gateway per ring node; alongside Cashu (see below) | Guardian + gateway APIs via shared proxy |
 | **Ark ASP** (`captaind` + `cln`) *(opt-in, experimental)* | Ark server (off-chain VTXOs) + a Core Lightning bridge that opens one channel into the ring (see below) | Ark gRPC via shared proxy; CLN P2P open |
+| **Electrum swap provider** (`electrum` + `nostr-relay`) | One Electrum wallet run as a submarine-swap provider, opening one channel into the ring and advertising over a local single-purpose Nostr relay (see below) | Relay WebSocket via shared proxy (wss); Electrum RPC closed |
 | **Bitcart** (barebits fork w/ LND support) | Payment processor (its own LND) | HTTP via shared proxy |
 | **CashuPayServer** (barebits fork w/ on-chain support) | BTCPay-compatible payment gateway backed by the mint (built from source) | HTTP via shared proxy |
 | **WooCommerce** | WordPress storefront selling the demo cards via the BTCPay plugin (its own MariaDB) | HTTP via shared proxy; DB internal |
@@ -268,6 +269,55 @@ Configure under `ark`.
 Enable per network with `ark.enabled: true`. captaind's wallet seed lives in the
 `ark_captaind_data` volume and the bridge's in `ark_cln_data`, so an auto-reset
 re-creates the ASP from scratch (new deposit addresses).
+
+### Electrum submarine-swap provider (+ Nostr relay)
+
+Each network runs **one Electrum wallet as a submarine-swap provider**, advertised
+over a **local Nostr relay** — so anyone can point an Electrum wallet at the relay
+and swap between on-chain and Lightning against it. **On by default**; configure
+under `electrum`.
+
+Electrum's Lightning is a **non-routing client**, so it can't take a place in the
+LND ring's circular-rebalancing triangle (that needs payment forwarding). Two
+consequences shape the design:
+
+- It opens **one channel into the ring** — `electrum.target_node` (default
+  `argus1`), size `electrum.channel_btc` (default 0.5 BTC), **50/50 from the start**
+  (the channel is opened with a matching `--push_amount`). Attaching to the
+  already-announced, internet-reachable, self-rebalancing ring is what gives
+  outside testers a **routable path to reach the provider**.
+- It keeps a large on-chain **`reserve_btc`** (default 5 BTC) — the fuel a swap
+  server self-heals with. A swap server stays liquid by swapping
+  on-chain↔Lightning against its reserve, **not** by circular routing, so the
+  reserve matters more than a fancy channel topology. (Three Electrum wallets
+  *could* swap against each other, but that's a mesh of on-chain-backed swaps, not
+  a free-rotating routing triangle — see the design notes.)
+
+- **electrum** is built from source into a shared image (`generated/electrum/`,
+  like the cashu.me / Ark-CLN images), pinned to Electrum ≥ 4.6 (nostr swaps
+  landed in 4.6.0). It runs headless (`electrum daemon` in the foreground), uses
+  this network's **Fulcrum** as its Electrum server, and runs the **`swapserver`**
+  plugin — announcing offers on the relay with `electrum.fee_millionths` (default
+  5000) and `electrum.pow_target` (default 0 for instant startup; raise it for
+  spam-resistance / better client-side ranking).
+- **nostr-relay** is the upstream [`nostr-rs-relay`](https://github.com/scsibug/nostr-rs-relay)
+  image, locked to a **single purpose**: its `event_kind_allowlist` accepts **only**
+  the two Electrum swap kinds — `30315` (the offer announcement) and `25582` (the
+  encrypted negotiation DM) — and rejects everything else. (Accepting only the
+  offer kind would show offers but let no swap execute.) A small `nostr-relay-sweeper`
+  sidecar expires anything older than `relay.retention_hours` (default 24). The
+  relay's WebSocket is fronted publicly by the shared Caddy (**wss**) so external
+  testers can discover the provider; the local wallet reaches it in-cluster over
+  `ws://nostr-relay`.
+- **Funding** mirrors the ring: `electrum.funding: auto` mines
+  `reserve_btc + channel_btc` from the miner/signer wallet on mineable networks;
+  `external` (the default off mineable nets) waits for coins sent to the address
+  the container prints. The wallet is **unencrypted** (always unlocked, as the swap
+  server requires) — fine for testnets, never for mainnet.
+
+The wallet/seed lives in the `electrum_data` volume, so an auto-reset re-creates
+the provider from scratch. Set `electrum.enabled: false` to opt out per network, or
+`electrum.relay.enabled: false` to keep the wallet but skip the local relay.
 
 ## Dashboard
 

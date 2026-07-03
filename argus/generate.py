@@ -13,6 +13,7 @@ from .builders import REGISTRY
 from .cashu_wallet import generate_cashu_wallet
 from .cashupayserver import generate_cashupayserver
 from .config import ArgusConfig, ConfigError, load_config
+from .electrum import generate_electrum_image
 from .constants import NETWORK_SPECS
 from .credentials import generate_credentials
 from .faucet.pow import is_value_pegged as is_pow_value_pegged
@@ -207,6 +208,13 @@ def generate(
     ark_cln_dir = generate_ark_cln(cfg, output_dir)
     if ark_cln_dir is not None:
         dirs.append(ark_cln_dir)
+
+    # The shared Electrum image (headless swap-server wallet, built from source),
+    # reused by every network's per-net electrum container. Spans all networks.
+    # (The Nostr relay uses an upstream image directly — no build context.)
+    electrum_dir = generate_electrum_image(cfg, output_dir)
+    if electrum_dir is not None:
+        dirs.append(electrum_dir)
 
     # The shared Caddy layer always reflects the full set of enabled networks.
     shared_dir = generate_shared(cfg, port_map, output_dir)

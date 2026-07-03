@@ -171,6 +171,13 @@ class GlobalConfig(_Base):
     # Argus builds it from source into a shared context (see argus.ark_cln);
     # bump global.ark_cln_ref / the build args there to update CLN/the plugin.
     ark_captaind_image: str = "secondark/captaind:latest"
+    # The single-purpose Nostr relay the Electrum swap provider announces on. Uses
+    # the upstream nostr-rs-relay image directly (no build): it natively accepts a
+    # kind allowlist (event_kind_allowlist) and forwards ephemeral events, which is
+    # exactly what the swap flow needs. The retention sweep runs alongside it.
+    nostr_relay_image: str = "scsibug/nostr-rs-relay:0.9.0"
+    # Minimal image for the relay's periodic 24h retention sweep (a sqlite3 DELETE).
+    sqlite_image: str = "alpine:3.20"
     # The WooCommerce storefront runs on the official WordPress images; the
     # WP-CLI image drives the (idempotent) provisioning.
     # Latest WordPress (>= 6.9 is required by current WooCommerce releases).
@@ -498,6 +505,71 @@ class ArkCfg(_Base):
     @classmethod
     def _check_alias(cls, v: str) -> str:
         return _check_alias(v)
+
+
+class NostrRelayCfg(_Base):
+    """The local Nostr relay the Electrum swap provider announces on.
+
+    Electrum's submarine-swap discovery rides Nostr: the provider publishes swap
+    *offers* (kind ``30315``, a NIP-38 replaceable event) and negotiates each swap
+    over encrypted *ephemeral* DMs (kind ``25582``). This relay is deliberately
+    single-purpose — it accepts ONLY those two kinds (a write-policy whitelist) and
+    expires everything older than ``retention_hours`` — and is exposed publicly so
+    outside testers can discover the provider and run swaps against it.
+
+    ``public`` fronts the relay's WebSocket through the shared Caddy (``wss://`` at
+    the shared hostname on its own port when ``ssl`` + ``global.ssl_enabled``, else
+    plain ``ws://``) and opens the port in the firewall. The local Electrum wallet
+    always reaches the relay in-cluster over ``ws://nostr-relay`` regardless.
+    """
+
+    enabled: bool = True
+    # Expire ALL stored events older than this. Mostly a safety net: kind 30315 is
+    # replaceable (auto-superseded ~every 10 min) and 25582 is ephemeral (not
+    # persisted), so little accumulates — but the sweep guarantees the 24h cap.
+    retention_hours: int = Field(default=24, ge=1)
+    public: bool = True  # front via shared Caddy + open the firewall port
+    ssl: bool = True  # follows global.ssl_enabled too (wss when both on)
+    # Extra relay URLs to ALSO announce on (besides this local one), e.g. public
+    # relays so wallets that don't know this relay can still find the offers.
+    extra_relays: list[str] = Field(default_factory=list)
+
+
+class ElectrumSwapsCfg(_Base):
+    """One Electrum wallet run as a submarine-swap PROVIDER, advertised over Nostr.
+
+    Electrum's Lightning is a non-routing client, so it can't join the LND ring's
+    circular-rebalancing triangle. Instead a single Electrum wallet opens ONE
+    channel into the ring (``target_node``, 50/50 from the start) and keeps a large
+    on-chain ``reserve_btc`` — the fuel a swap server needs, since it self-heals by
+    swapping on-chain<->Lightning rather than by routing. Attaching to the ring
+    gives it a routable, internet-reachable path so external testers can reach it.
+
+    It runs the ``swapserver`` plugin (Electrum >= 4.6), announcing offers on the
+    local :class:`NostrRelayCfg` relay. ``fee_millionths`` is the swap fee
+    (``plugins.swapserver.fee_millionths``) and ``pow_target`` the announcement
+    proof-of-work bits (``swapserver_pow_target``); the default 0 keeps startup
+    instant for dev — raise it for spam-resistance / better client-side ranking at
+    the cost of a one-time grind.
+
+    ``funding`` mirrors the ring: ``auto`` mines ``reserve_btc + channel_btc`` from
+    the miner/signer wallet (mineable nets), ``external`` waits for coins sent to
+    the address the setup sidecar prints. Tri-state ``None`` resolves like the ring.
+    Enabled by default on every network; resolve effective state with
+    :meth:`NetworkCfg.electrum_enabled`.
+    """
+
+    enabled: bool = True
+    reserve_btc: float = Field(default=5.0, ge=0)  # on-chain funds for swaps
+    channel_btc: float = Field(default=0.5, gt=0)  # the LN channel into the ring
+    target_node: Literal["argus1", "argus2", "argus3"] = "argus1"
+    fee_millionths: int = Field(default=5000, ge=0)  # plugins.swapserver.fee_millionths
+    pow_target: int = Field(default=0, ge=0)  # swapserver_pow_target (0 = no grind)
+    funding: Literal["auto", "external"] | None = None
+    relay: NostrRelayCfg = Field(default_factory=NostrRelayCfg)
+    # Extra `electrum setconfig <key> <value>` pairs applied before the daemon
+    # starts (escape hatch for tuning). Values are stringified as given.
+    extra_config: dict[str, str] = Field(default_factory=dict)
 
 
 class BitcartPorts(_Base):
@@ -869,6 +941,7 @@ class NetworkCfg(_Base):
     cashu: CashuCfg = Field(default_factory=CashuCfg)
     fedimint: FedimintCfg = Field(default_factory=FedimintCfg)
     ark: ArkCfg = Field(default_factory=ArkCfg)
+    electrum: ElectrumSwapsCfg = Field(default_factory=ElectrumSwapsCfg)
     bitcart: BitcartCfg = Field(default_factory=BitcartCfg)
     cashupayserver: CashuPayServerCfg = Field(default_factory=CashuPayServerCfg)
     woocommerce: WooCommerceCfg = Field(default_factory=WooCommerceCfg)
@@ -1077,6 +1150,43 @@ class NetworkCfg(_Base):
             return self.lnd_tertiary_enabled(spec)
         return True  # argus1 is always deployed
 
+    def electrum_enabled(self, spec: NetworkSpec) -> bool:
+        """Effective Electrum swap-provider state.
+
+        On by default for every enabled network. It needs an Electrum server to
+        talk to (a Fulcrum indexer) and a ring node to channel into (argus1 —
+        always present), so those are validated, not silently disabled."""
+        return self.electrum.enabled
+
+    def electrum_relay_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether the local Nostr relay is deployed (only when Electrum is on)."""
+        return self.electrum_enabled(spec) and self.electrum.relay.enabled
+
+    def electrum_funding_mode(self, spec: NetworkSpec) -> str:
+        """How the Electrum wallet gets on-chain coins: ``auto`` (mine) or
+        ``external``. Same tri-state rule as the LND ring."""
+        v = self.electrum.funding
+        if v is not None:
+            return v
+        return "auto" if (spec.supports_miner and self.miner.enabled) else "external"
+
+    def electrum_channel_target(self, spec: NetworkSpec) -> tuple[str, str, str]:
+        """Resolve the Electrum wallet's channel target to (alias, lnd_service,
+        volume), mirroring :meth:`ark_channel_target`."""
+        alias = self.electrum.target_node
+        service, volume = ARK_RING_NODES[alias]
+        return alias, service, volume
+
+    def electrum_target_enabled(self, spec: NetworkSpec) -> bool:
+        """Whether the Electrum wallet's chosen ring node is actually deployed
+        (argus1 always is; argus2/argus3 follow the secondary/tertiary toggles)."""
+        alias = self.electrum.target_node
+        if alias == "argus2":
+            return self.lnd_secondary_enabled(spec)
+        if alias == "argus3":
+            return self.lnd_tertiary_enabled(spec)
+        return True  # argus1 is always deployed
+
     def bitcoind_p2p_gated(self, net_key: str, spec: NetworkSpec) -> bool:
         """Whether bitcoind self-gates its P2P listener (regtest auto-channels):
         it keeps inbound P2P closed until LND channel setup completes, then
@@ -1093,11 +1203,18 @@ class NetworkCfg(_Base):
 
     def lnd_wumbo_enabled(self, spec: NetworkSpec) -> bool:
         """Effective wumbo: explicit, or forced on when a large auto-channel needs it."""
+        # Max non-wumbo channel is 16,777,215 sat (~0.167 BTC).
+        legacy_max = 16_777_215
         if self.lnd.wumbo:
             return True
         if self.lnd_channels_enabled(spec):
-            # Max non-wumbo channel is 16,777,215 sat (~0.167 BTC).
-            return round(self.lnd.channels.channel_btc * 1e8) > 16_777_215
+            if round(self.lnd.channels.channel_btc * 1e8) > legacy_max:
+                return True
+        # The Electrum swap wallet opens a channel INTO the ring; if it exceeds the
+        # legacy cap, the ring node must advertise wumbo or Electrum's open fails.
+        if self.electrum_enabled(spec):
+            if round(self.electrum.channel_btc * 1e8) > legacy_max:
+                return True
         return False
 
 
@@ -1512,10 +1629,42 @@ class ArgusConfig(_Base):
                         f"to a >= {_ARK_MIN_CORE_MAJOR}.0 build, or disable ark on this network"
                     )
 
+            # Electrum swap provider: it needs an Electrum server to talk to (a
+            # Fulcrum indexer) and opens one channel into the ring, so the target
+            # node must be deployed (argus1 always is). Funding mirrors the ring:
+            # 'auto' only where Argus mines with the miner on.
+            if net.electrum_enabled(spec):
+                if not net.enabled_indexers():
+                    errors.append(
+                        f"[{key}] electrum (the swap provider) needs a Fulcrum "
+                        f"indexer to use as its Electrum server; enable at least one "
+                        f"indexer, or disable electrum on this network"
+                    )
+                if not net.electrum_target_enabled(spec):
+                    alias = net.electrum.target_node
+                    errors.append(
+                        f"[{key}] electrum.target_node={alias!r} is not deployed on "
+                        f"this network; pick a ring node that exists (argus1 is always "
+                        f"on; enable lnd.secondary for argus2 / lnd.tertiary for argus3)"
+                    )
+                if net.electrum_funding_mode(spec) == "auto" and not (
+                    spec.supports_miner and net.miner.enabled
+                ):
+                    errors.append(
+                        f"[{key}] electrum.funding='auto' needs a network Argus mines "
+                        f"with the miner enabled (it funds the wallet by mining); use "
+                        f"funding: external, or enable the miner"
+                    )
+
             # track whether any internet-facing SSL service exists (needs ACME email)
             if key != "regtest":
                 services_ssl = [
                     net.cashu.enabled and net.cashu.ssl,
+                    # The public Nostr relay is fronted by Caddy (wss) so external
+                    # testers can discover the swap provider — a public SSL service.
+                    net.electrum_relay_enabled(spec)
+                    and net.electrum.relay.public
+                    and net.electrum.relay.ssl,
                     # The guardian API is fronted by Caddy (its URL goes in the
                     # invite code), so it needs TLS like the other public services.
                     net.fedimint_enabled(spec),

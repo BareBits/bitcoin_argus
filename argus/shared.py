@@ -100,6 +100,18 @@ def _http_sites(cfg: ArgusConfig, port_map: dict[str, dict[str, int]]) -> list[_
                     h2c=True,
                 )
             )
+        if net.electrum_relay_enabled(NETWORK_SPECS[net_key]) and net.electrum.relay.public:
+            # The local Nostr relay's WebSocket, fronted publicly so external
+            # testers can discover the Electrum swap provider and run swaps.
+            # Caddy's reverse_proxy upgrades the WebSocket automatically (same as
+            # the Fedimint WS APIs). Follows the global switch + the relay's flag.
+            sites.append(
+                _HttpSite(
+                    public_port=ports["nostr_relay_public"],
+                    backend_port=ports["nostr_relay_backend"],
+                    ssl=cfg.global_.ssl_enabled and net.electrum.relay.ssl,
+                )
+            )
         if net.mempool_enabled(NETWORK_SPECS[net_key]):
             sites.append(
                 _HttpSite(
